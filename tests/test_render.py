@@ -1,0 +1,98 @@
+"""レンダリング結果の検証。Confluence に貼れる XHTML であることを保証する。"""
+
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import pytest
+
+from seminar_report.models import Capture, Report, Section
+from seminar_report.render.confluence_storage import (
+    render_storage,
+    render_storage_without_images,
+    wrap_for_validation,
+)
+from seminar_report.render.markdown import render_markdown
+
+
+@pytest.fixture
+def report() -> Report:
+    return Report(
+        title="社内AI活用セミナー",
+        overview="本セミナーでは導入事例を扱った。",
+        key_points=["効果は明確", "課題は運用体制"],
+        sections=[
+            Section(
+                title="アーキテクチャ<解説>",
+                body=(
+                    "全体像は次のとおりです。\n\n"
+                    "[[capture:s0_0]]\n\n"
+                    "- **重要** な点\n"
+                    "- `code` を含む点\n\n"
+                    "### 補足\n"
+                    "詳細は後述します。"
+                ),
+            )
+        ],
+        captures=[
+            Capture(
+                marker_id="s0_0",
+                requested_time=25.0,
+                resolved_time=27.0,
+                caption="全体構成図 & 凡例",
+                filename="s0_0.jpg",
+                image_path=Path("images/s0_0.jpg"),
+            )
+        ],
+        duration=70.0,
+    )
+
+
+def test_storage_is_well_formed_xml(report: Report) -> None:
+    ET.fromstring(wrap_for_validation(render_storage(report)))
+
+
+def test_storage_escapes_special_characters(report: Report) -> None:
+    xhtml = render_storage(report)
+    assert "&lt;解説&gt;" in xhtml
+    assert "&amp;" in xhtml
+
+
+def test_storage_embeds_attachment_reference(report: Report) -> None:
+    xhtml = render_storage(report)
+    assert 'ri:filename="s0_0.jpg"' in xhtml
+    assert "<ac:image" in xhtml
+
+
+def test_storage_converts_markdown_constructs(report: Report) -> None:
+    xhtml = render_storage(report)
+    assert "<strong>重要</strong>" in xhtml
+    assert "<code>code</code>" in xhtml
+    assert "<ul><li>" in xhtml
+    assert "<h4>補足</h4>" in xhtml
+
+
+def test_first_pass_body_has_no_image_reference(report: Report) -> None:
+    """画像添付前のページ作成に使う本文には添付参照が含まれてはいけない。"""
+    xhtml = render_storage_without_images(report)
+    assert "ri:attachment" not in xhtml
+    assert "アーキテクチャ" in xhtml
+    ET.fromstring(wrap_for_validation(xhtml))
+
+
+def test_excluded_capture_is_not_rendered(report: Report) -> None:
+    report.captures[0].included = False
+    assert "ri:attachment" not in render_storage(report)
+
+    markdown = render_markdown(report)
+    assert "s0_0.jpg" not in markdown
+    # 不採用のマーカー跡が空行として残らないこと
+    assert "\n\n\n" not in markdown
+
+
+def test_markdown_contains_image_and_caption(report: Report) -> None:
+    markdown = render_markdown(report)
+    assert "![全体構成図 & 凡例](images/s0_0.jpg)" in markdown
+    assert "00:00:27" in markdown
+    assert "## アーキテクチャ<解説>" in markdown

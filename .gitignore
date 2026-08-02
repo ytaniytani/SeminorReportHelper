@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# 認証情報。絶対にコミットしない
+.env
+
+# 生成物・キャッシュ
+.cache/
+output/
+jobs/
+*.mp4
+*.wav
+.pytest_cache/

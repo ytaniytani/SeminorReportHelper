@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>セミナーレポート生成</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>セミナーレポート生成</h1>
+    <p class="sub">動画から画像付きレポートを作り、Confluence に反映します</p>
+  </header>
+
+  <main>
+    <!-- 1. 投入 -->
+    <section id="view-upload" class="view active">
+      <form id="upload-form">
+        <div class="drop" id="drop">
+          <input type="file" id="video" accept="video/mp4,video/*" hidden />
+          <p id="drop-label">ここに .mp4 をドロップ、またはクリックして選択</p>
+        </div>
+
+        <div class="grid">
+          <label>
+            詳細度
+            <select id="detail"></select>
+          </label>
+          <label>
+            目標文字数 <span class="hint">（空ならプリセット値）</span>
+            <input type="number" id="target-chars" min="200" max="30000" step="100" placeholder="例: 3000" />
+          </label>
+          <label>
+            LLM プロバイダ
+            <select id="provider"></select>
+          </label>
+          <label>
+            Whisper モデル
+            <select id="whisper-model">
+              <option value="">設定値を使う</option>
+              <option value="tiny">tiny（最速・低精度）</option>
+              <option value="base">base</option>
+              <option value="small">small</option>
+              <option value="medium">medium（推奨）</option>
+              <option value="large-v3">large-v3（最高精度・低速）</option>
+            </select>
+          </label>
+          <label>
+            音声の言語
+            <select id="audio-language">
+              <option value="">自動判定</option>
+              <option value="ja">日本語</option>
+              <option value="en">英語</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="checks">
+          <label class="check"><input type="checkbox" id="include-images" checked /> 画像を入れる</label>
+          <label class="check"><input type="checkbox" id="verify-captures" /> AI で画像を検証する（精度↑・コスト↑）</label>
+        </div>
+
+        <button type="submit" id="submit" disabled>レポートを生成</button>
+      </form>
+    </section>
+
+    <!-- 2. 進捗 -->
+    <section id="view-progress" class="view">
+      <h2 id="progress-label">処理中…</h2>
+      <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+      <p class="detail" id="progress-detail"></p>
+      <p class="note">1 時間の動画で 10〜30 分ほどかかります。文字起こしの結果はキャッシュされるため、
+        同じ動画で詳細度だけ変えて作り直す場合は短時間で終わります。</p>
+      <ul id="log" class="log"></ul>
+    </section>
+
+    <!-- 3. プレビュー -->
+    <section id="view-result" class="view">
+      <div class="result-head">
+        <input type="text" id="report-title" class="title-input" />
+        <p class="meta" id="report-meta"></p>
+      </div>
+
+      <div class="block">
+        <h3>概要</h3>
+        <textarea id="overview" rows="5"></textarea>
+      </div>
+
+      <div class="block">
+        <h3>要点</h3>
+        <textarea id="key-points" rows="5"></textarea>
+        <p class="hint">1 行 1 項目</p>
+      </div>
+
+      <div id="sections"></div>
+
+      <div class="block">
+        <h3>挿入画像</h3>
+        <p class="hint">チェックを外すとレポートから除外されます。画像をクリックすると別のフレームに差し替えます。</p>
+        <div id="captures" class="captures"></div>
+      </div>
+
+      <div class="actions">
+        <button id="save">編集を保存</button>
+        <button id="download">ZIP をダウンロード</button>
+        <button id="publish" class="primary">Confluence に投稿</button>
+        <button id="restart" class="ghost">別の動画を処理</button>
+      </div>
+      <p id="status" class="status"></p>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
