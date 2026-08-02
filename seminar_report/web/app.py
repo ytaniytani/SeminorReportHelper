@@ -22,6 +22,12 @@ from seminar_report.web.jobs import Job, manager
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+POLL_INTERVAL = 0.5
+"""ジョブのイベント配列を見に行く間隔(秒)。"""
+
+HEARTBEAT_INTERVAL = 15.0
+"""イベントが無い間も接続維持のコメントを送る間隔(秒)。"""
+
 app = FastAPI(title="Seminar Report Helper")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -78,8 +84,13 @@ async def create_job(
     job_root.mkdir(parents=True, exist_ok=True)
     video_path = job_root / Path(video.filename).name
 
-    with video_path.open("wb") as fh:
-        shutil.copyfileobj(video.file, fh)
+    def save() -> None:
+        with video_path.open("wb") as fh:
+            shutil.copyfileobj(video.file, fh)
+
+    # 30 分の動画は 1〜2GB になる。同期 I/O のままだとその間イベントループが
+    # 止まり、進行中ジョブの SSE まで巻き添えで固まる。
+    await asyncio.to_thread(save)
 
     chars = int(target_chars) if target_chars.strip().isdigit() else None
     options = PipelineOptions(
@@ -111,15 +122,28 @@ async def job_events(job_id: str) -> StreamingResponse:
 
     async def stream():
         sent = 0
+        idle = 0.0
         while True:
-            for event in job.events_since(sent):
+            events = job.events_since(sent)
+            for event in events:
                 sent += 1
                 yield f"data: {event.model_dump_json()}\n\n"
+            if events:
+                idle = 0.0
+
             if job.finished:
                 payload = {"status": job.status.value, "error": job.error}
                 yield f"event: end\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 return
-            await asyncio.sleep(0.5)
+
+            # モデルの初回 DL 中などはイベントが数分止まる。無通信のままだと
+            # プロキシやセキュリティソフトに切断されるため、定期的に空コメント
+            # (SSE のコメント行) を送って接続を維持する。
+            await asyncio.sleep(POLL_INTERVAL)
+            idle += POLL_INTERVAL
+            if idle >= HEARTBEAT_INTERVAL:
+                idle = 0.0
+                yield ": keepalive\n\n"
 
     return StreamingResponse(
         stream(),
@@ -162,6 +186,27 @@ def _serialize_report(report: Report, job_id: str) -> dict:
             }
             for c in report.captures
         ],
+    }
+
+
+@app.get("/api/jobs")
+async def list_jobs() -> dict:
+    """新しい順のジョブ一覧。
+
+    SSE が切れたりページを再読み込みしたりしても、走っている / 終わった
+    ジョブに戻れるようにするための入口。
+    """
+    return {
+        "jobs": [
+            {
+                "job_id": job.id,
+                "status": job.status.value,
+                "video": job.video_path.name,
+                "title": job.result.report.title if job.result else None,
+                "error": job.error,
+            }
+            for job in manager.recent()
+        ]
     }
 
 

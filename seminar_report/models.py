@@ -144,6 +144,7 @@ class JobStatus(str, Enum):
 
 class JobStep(str, Enum):
     AUDIO = "audio"
+    MODEL = "model"
     TRANSCRIBE = "transcribe"
     SUMMARIZE = "summarize"
     OUTLINE = "outline"
@@ -154,6 +155,7 @@ class JobStep(str, Enum):
 
 STEP_LABELS: dict[JobStep, str] = {
     JobStep.AUDIO: "音声を抽出しています",
+    JobStep.MODEL: "文字起こしモデルを準備しています",
     JobStep.TRANSCRIBE: "文字起こしをしています",
     JobStep.SUMMARIZE: "内容を要約しています",
     JobStep.OUTLINE: "章立てを設計しています",

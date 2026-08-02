@@ -81,6 +81,7 @@ def run_pipeline(
         language=options.whisper_language,
         on_progress=lambda ratio, detail: progress(JobStep.TRANSCRIBE, ratio, detail),
         use_cache=options.use_cache,
+        on_status=lambda message: progress(JobStep.MODEL, 0.0, message),
     )
     if not transcript.segments:
         raise RuntimeError("文字起こしの結果が空でした。音声が含まれているか確認してください。")

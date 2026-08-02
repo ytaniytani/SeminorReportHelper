@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +16,11 @@ from seminar_report.media.audio import extract_audio, file_digest, probe_duratio
 from seminar_report.models import Segment, Transcript
 
 ProgressFn = Callable[[float, str], None]
+"""(進捗率, 詳細) を受け取る。"""
+
+StatusFn = Callable[[str], None]
+"""文字起こし開始前の準備状況を伝える。モデルの初回 DL は数分かかるため、
+無言の時間を作らないよう別チャネルにしている。"""
 
 
 def cache_path(video: Path, model: str) -> Path:
@@ -32,16 +38,68 @@ def load_cached(video: Path, model: str) -> Transcript | None:
         return None
 
 
+def cuda_device_count() -> int:
+    """利用可能な CUDA デバイス数。
+
+    faster-whisper が使うのは torch ではなく CTranslate2 なので、GPU の有無は
+    CTranslate2 に直接聞く。torch の有無で判定すると、torch を入れていない
+    (かつ本来不要な) 環境で GPU が見えず、常に CPU に落ちてしまう。
+    """
+    try:
+        import ctranslate2
+
+        return int(ctranslate2.get_cuda_device_count())
+    except Exception:  # noqa: BLE001 - 判定失敗は「GPU 無し」と同義に扱う
+        return 0
+
+
 def _resolve_device(device: str) -> tuple[str, str]:
     """(device, compute_type) を決める。GPU があれば使う。"""
     if device == "auto":
-        try:
-            import torch
-
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            device = "cpu"
+        device = "cuda" if cuda_device_count() > 0 else "cpu"
     return (device, "float16" if device == "cuda" else "int8")
+
+
+def _resolve_beam_size(device: str) -> int:
+    """探索幅。CPU では実行時間に直結するため既定を下げる。
+
+    GPU は探索を広げても十分速いので、精度側に振ったままにする。
+    """
+    configured = get_settings().whisper_beam_size
+    if configured and configured > 0:
+        return configured
+    return 5 if device == "cuda" else 1
+
+
+def _resolve_cpu_threads() -> int:
+    """CTranslate2 に渡すスレッド数。既定の 4 では多コア機を使い切れない。"""
+    configured = get_settings().whisper_cpu_threads
+    if configured and configured > 0:
+        return configured
+    return os.cpu_count() or 4
+
+
+def _load_model(model_size: str, device: str, compute_type: str, cpu_threads: int):
+    """WhisperModel を組み立てる。CUDA が使えなければ CPU に落として続行する。
+
+    CUDA デバイスが見えていても cuBLAS / cuDNN が無ければここで例外になる。
+    その場合に処理ごと失敗させると、GPU 判定を直したことでかえって動かなく
+    なるため、必ず CPU へ縮退させる。戻り値は (model, 実際に使った device)。
+    """
+    from faster_whisper import WhisperModel
+
+    try:
+        model = WhisperModel(
+            model_size, device=device, compute_type=compute_type, cpu_threads=cpu_threads
+        )
+        return model, device, None
+    except Exception as exc:  # noqa: BLE001 - CUDA 環境の不備を握って縮退する
+        if device != "cuda":
+            raise
+        model = WhisperModel(
+            model_size, device="cpu", compute_type="int8", cpu_threads=cpu_threads
+        )
+        return model, "cpu", str(exc)
 
 
 def transcribe(
@@ -50,6 +108,7 @@ def transcribe(
     language: str | None = None,
     on_progress: ProgressFn | None = None,
     use_cache: bool = True,
+    on_status: StatusFn | None = None,
 ) -> Transcript:
     """動画を文字起こしする。"""
     settings = get_settings()
@@ -64,7 +123,7 @@ def transcribe(
             return cached
 
     try:
-        from faster_whisper import WhisperModel
+        import faster_whisper  # noqa: F401
     except ImportError as exc:
         raise RuntimeError(
             "faster-whisper が入っていません。"
@@ -73,17 +132,39 @@ def transcribe(
 
     duration = probe_duration(video)
 
+    def status(message: str) -> None:
+        if on_status:
+            on_status(message)
+
     with tempfile.TemporaryDirectory() as tmp:
         wav = extract_audio(video, Path(tmp) / "audio.wav")
 
         device, compute_type = _resolve_device(settings.whisper_device)
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        cpu_threads = _resolve_cpu_threads()
+
+        # モデルの初回ロードは HuggingFace からの DL を伴い、medium で 1.5GB・
+        # 数分かかる。ここで無言になると UI 上は停止に見えるため必ず知らせる。
+        status(
+            f"{model_size} モデルを読み込んでいます"
+            f"（{'GPU' if device == 'cuda' else 'CPU'}／初回はダウンロードに数分かかります）"
+        )
+        model, device, cuda_error = _load_model(
+            model_size, device, compute_type, cpu_threads
+        )
+        if cuda_error:
+            status(f"GPU を使えなかったため CPU で続行します: {cuda_error}")
+
+        beam_size = _resolve_beam_size(device)
+        status(
+            f"{model_size} / {device} / beam={beam_size}"
+            + (f" / {cpu_threads} スレッド" if device == "cpu" else "")
+        )
 
         raw_segments, info = model.transcribe(
             str(wav),
             language=language,
             vad_filter=True,
-            beam_size=5,
+            beam_size=beam_size,
         )
 
         segments: list[Segment] = []

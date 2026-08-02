@@ -6,6 +6,26 @@ let config = null;
 let jobId = null;
 let report = null;
 
+// ジョブ ID を変数だけで持つと、リロードした瞬間に走行中のジョブへ戻れなくなる。
+const JOB_KEY = "seminar-report:job";
+
+function rememberJob(id) {
+  jobId = id;
+  try {
+    localStorage.setItem(JOB_KEY, id);
+  } catch {
+    // プライベートモード等で保存できなくても動作自体は続けられる
+  }
+}
+
+function clearJob() {
+  try {
+    localStorage.removeItem(JOB_KEY);
+  } catch {
+    /* 同上 */
+  }
+}
+
 // ---- 画面遷移 ----
 function showView(name) {
   for (const view of document.querySelectorAll(".view")) {
@@ -47,6 +67,46 @@ async function init() {
   if (!config.confluence_configured) {
     $("publish").disabled = true;
     $("publish").title = ".env に Confluence の接続情報が未設定です";
+  }
+
+  await resumePreviousJob();
+}
+
+/** 前回のジョブが残っていれば、その状態に復帰する。 */
+async function resumePreviousJob() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(JOB_KEY);
+  } catch {
+    return;
+  }
+  if (!saved) return;
+
+  let data;
+  try {
+    const response = await fetch(`/api/jobs/${saved}`);
+    if (!response.ok) {
+      clearJob();
+      return;
+    }
+    data = await response.json();
+  } catch {
+    return;
+  }
+
+  jobId = saved;
+  if (data.status === "done") {
+    report = data.report;
+    renderReport();
+    showView("result");
+    setStatus("前回のジョブを復帰しました");
+  } else if (data.status === "failed") {
+    showView("progress");
+    showFailure(data.error);
+  } else {
+    showView("progress");
+    $("progress-label").textContent = "処理中のジョブに再接続しています…";
+    listen();
   }
 }
 
@@ -118,35 +178,47 @@ $("upload-form").addEventListener("submit", async (event) => {
     $("progress-label").textContent = "アップロードに失敗しました";
     return;
   }
-  jobId = (await response.json()).job_id;
+  rememberJob((await response.json()).job_id);
+  lastStep = null;
   listen();
 });
 
-// ---- 進捗 (SSE) ----
+// ---- 進捗 ----
+// 一次経路は SSE。切れた場合はポーリングに切り替える。長時間ジョブでは
+// 接続が落ちることがあるが、ジョブ自体はサーバー側で走り続けているため、
+// UI を諦めさせずに結果まで辿り着かせる。
+let lastStep = null;
+let pollTimer = null;
+
+function showStep(data) {
+  $("progress-label").textContent = data.label;
+  $("progress-detail").textContent = data.detail || "";
+  $("bar-fill").style.width = `${Math.round((data.ratio || 0) * 100)}%`;
+
+  if (data.step !== lastStep) {
+    lastStep = data.step;
+    const item = document.createElement("li");
+    item.textContent = data.label;
+    $("log").appendChild(item);
+  }
+}
+
+function showFailure(error) {
+  $("progress-label").textContent = "失敗しました";
+  $("progress-detail").textContent = error || "";
+  clearJob();
+}
+
 function listen() {
   const source = new EventSource(`/api/jobs/${jobId}/events`);
-  let lastStep = null;
 
-  source.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    $("progress-label").textContent = data.label;
-    $("progress-detail").textContent = data.detail || "";
-    $("bar-fill").style.width = `${Math.round((data.ratio || 0) * 100)}%`;
-
-    if (data.step !== lastStep) {
-      lastStep = data.step;
-      const item = document.createElement("li");
-      item.textContent = data.label;
-      $("log").appendChild(item);
-    }
-  };
+  source.onmessage = (event) => showStep(JSON.parse(event.data));
 
   source.addEventListener("end", async (event) => {
     source.close();
     const data = JSON.parse(event.data);
     if (data.status === "failed") {
-      $("progress-label").textContent = "失敗しました";
-      $("progress-detail").textContent = data.error || "";
+      showFailure(data.error);
       return;
     }
     await loadReport();
@@ -154,8 +226,44 @@ function listen() {
 
   source.onerror = () => {
     source.close();
-    $("progress-detail").textContent = "接続が切れました。ページを再読み込みしてください。";
+    // 接続が切れてもジョブは動き続けている。ポーリングで追いかける。
+    $("progress-detail").textContent = "接続が切れました。状態を確認しています…";
+    startPolling();
   };
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(async () => {
+    let data;
+    try {
+      const response = await fetch(`/api/jobs/${jobId}`);
+      if (!response.ok) throw new Error(String(response.status));
+      data = await response.json();
+    } catch {
+      $("progress-detail").textContent =
+        "サーバーに接続できません。起動したままか確認してください（再試行中）";
+      return;
+    }
+
+    if (data.status === "failed") {
+      stopPolling();
+      showFailure(data.error);
+      return;
+    }
+    if (data.status === "done") {
+      stopPolling();
+      await loadReport();
+      return;
+    }
+    $("progress-label").textContent = "処理中です…";
+    $("progress-detail").textContent = "接続が切れたため、状態を定期確認しています";
+  }, 3000);
+}
+
+function stopPolling() {
+  clearInterval(pollTimer);
+  pollTimer = null;
 }
 
 // ---- 結果表示 ----
@@ -327,8 +435,12 @@ $("publish").addEventListener("click", async () => {
 });
 
 $("restart").addEventListener("click", () => {
+  stopPolling();
+  clearJob();
   jobId = null;
   report = null;
+  lastStep = null;
+  $("log").innerHTML = "";
   videoInput.value = "";
   $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択";
   $("submit").disabled = true;

@@ -30,9 +30,16 @@ class Settings(BaseSettings):
     whisper_model: str = Field(default="medium", alias="SRH_WHISPER_MODEL")
     whisper_device: str = Field(default="auto", alias="SRH_WHISPER_DEVICE")
     whisper_language: str | None = Field(default=None, alias="SRH_WHISPER_LANGUAGE")
+    # 未指定なら device に応じて決める(GPU: 5 / CPU: 1)。CPU では beam_size を
+    # 下げると精度をほぼ落とさずに約 2 倍速くなる。
+    whisper_beam_size: int | None = Field(default=None, alias="SRH_WHISPER_BEAM_SIZE")
+    # 未指定なら CPU コア数。CTranslate2 の既定は 4 で、多コア機では遊んでしまう。
+    whisper_cpu_threads: int | None = Field(default=None, alias="SRH_WHISPER_CPU_THREADS")
 
     # ---- レポート ----
     report_language: str = Field(default="日本語", alias="SRH_REPORT_LANGUAGE")
+    # LLM を同時に何本走らせるか。上げすぎるとレート制限に当たる。
+    llm_concurrency: int = Field(default=4, alias="SRH_LLM_CONCURRENCY")
 
     # ---- Confluence ----
     confluence_base_url: str | None = Field(default=None, alias="CONFLUENCE_BASE_URL")

@@ -138,6 +138,79 @@ def transcribe_only(
 
 
 @app.command()
+def doctor() -> None:
+    """実行環境を診断する(GPU が使えているかの確認に)。"""
+    import os
+
+    from seminar_report.media.audio import FFmpegError, ffmpeg_path
+    from seminar_report.transcribe.whisper import (
+        _resolve_beam_size,
+        _resolve_cpu_threads,
+        _resolve_device,
+        cuda_device_count,
+    )
+
+    settings = get_settings()
+
+    try:
+        ffmpeg = ffmpeg_path()
+    except FFmpegError as exc:
+        ffmpeg = f"[red]見つかりません({exc})[/]"
+
+    gpus = cuda_device_count()
+    device, compute_type = _resolve_device(settings.whisper_device)
+
+    console.print("[bold]実行環境[/]")
+    console.print(f"  ffmpeg        : {ffmpeg}")
+    console.print(f"  CPU コア数    : {os.cpu_count()}")
+
+    if gpus > 0:
+        console.print(f"  CUDA デバイス : [green]{gpus} 台[/]")
+    else:
+        console.print("  CUDA デバイス : [yellow]なし(CPU で動作します)[/]")
+
+    console.print()
+    console.print("[bold]文字起こし[/]")
+    console.print(f"  モデル        : {settings.whisper_model}")
+    console.print(f"  デバイス      : {device} / {compute_type}")
+    console.print(f"  beam_size     : {_resolve_beam_size(device)}")
+    if device == "cpu":
+        console.print(f"  スレッド数    : {_resolve_cpu_threads()}")
+
+    if gpus == 0:
+        console.print()
+        console.print("[yellow]GPU が検出されませんでした。[/]")
+        console.print("  NVIDIA GPU 搭載機なら、次で CUDA ライブラリを入れると大幅に速くなります:")
+        console.print("    [cyan]pip install nvidia-cublas-cu12 nvidia-cudnn-cu12[/]")
+
+    console.print()
+    console.print("[bold]LLM[/]")
+    keys = {
+        "claude": settings.anthropic_api_key,
+        "openai": settings.openai_api_key,
+        "ollama": True,
+    }
+    models = {
+        "claude": settings.claude_model,
+        "openai": settings.openai_model,
+        "ollama": settings.ollama_model,
+    }
+    current = settings.llm_provider
+    console.print(f"  プロバイダ    : {current}")
+    console.print(f"  モデル        : {models.get(current, '?')}")
+    configured = "[green]設定済み[/]" if keys.get(current) else "[red]APIキー未設定[/]"
+    console.print(f"  認証          : {configured}")
+    console.print(f"  同時実行数    : {settings.llm_concurrency}")
+
+    console.print()
+    console.print("[bold]Confluence[/]")
+    if settings.confluence_configured():
+        console.print(f"  [green]設定済み[/] ({settings.confluence_base_url})")
+    else:
+        console.print("  [yellow]未設定[/](ZIP 出力は利用できます)")
+
+
+@app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port"),

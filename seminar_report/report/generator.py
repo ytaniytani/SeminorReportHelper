@@ -7,8 +7,11 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from seminar_report.config import get_settings
 from seminar_report.llm import prompts
 from seminar_report.llm.base import LLMError, LLMProvider
 from seminar_report.models import (
@@ -25,6 +28,37 @@ from seminar_report.report.detail import DetailSpec
 from seminar_report.report.markers import resolve_markers
 
 ProgressFn = Callable[[JobStep, float, str], None]
+
+def _concurrency(count: int) -> int:
+    """並列に投げる LLM リクエスト数。設定値と対象数の小さい方。"""
+    return max(1, min(get_settings().llm_concurrency, count))
+
+
+def _map_ordered(func: Callable, items: list, on_done: Callable[[int], None] | None = None) -> list:
+    """items を並列に処理し、結果を元の順序で返す。
+
+    LLM 呼び出しはネットワーク待ちが大半なのでスレッドで十分に効く。
+    進捗は「完了した数」で報告する(完了順は入力順と一致しないため)。
+    """
+    if not items:
+        return []
+    if len(items) == 1:
+        result = [func(0, items[0])]
+        if on_done:
+            on_done(1)
+        return result
+
+    results: list = [None] * len(items)
+    with ThreadPoolExecutor(max_workers=_concurrency(len(items))) as executor:
+        futures = {
+            executor.submit(func, index, item): index for index, item in enumerate(items)
+        }
+        for completed, future in enumerate(as_completed(futures), start=1):
+            results[futures[future]] = future.result()
+            if on_done:
+                on_done(completed)
+    return results
+
 
 DEFAULT_CHUNK_SECONDS = 15 * 60
 # 入力に使ってよいコンテキストの割合。残りは出力とプロンプト本体のために空ける。
@@ -77,35 +111,39 @@ def summarize_chunks(
     """map 段。各区間の要点を抽出する。"""
     chunks = plan_chunks(transcript, provider)
     limit = int(provider.context_chars * INPUT_BUDGET_RATIO)
-    summaries: list[ChunkSummary] = []
 
-    for index, (start, end) in enumerate(chunks):
-        text = transcript.to_timestamped_text(start, end)
-        if not text.strip():
-            continue
-        prompt = prompts.chunk_summary_prompt(_truncate(text, limit), index, len(chunks))
+    # 中身が空の区間は投げる前に落とす(無音の末尾など)
+    targets = [
+        (start, end, text)
+        for start, end in chunks
+        if (text := transcript.to_timestamped_text(start, end)).strip()
+    ]
+    if not targets:
+        return []
+
+    total = len(targets)
+
+    def summarize_one(index: int, target: tuple[float, float, str]) -> ChunkSummary:
+        start, end, text = target
+        prompt = prompts.chunk_summary_prompt(_truncate(text, limit), index, total)
         try:
             data = provider.complete_json(prompt, system=prompts.SYSTEM, max_tokens=1500)
         except LLMError:
             # 1 区間の失敗で全体を落とさない。素のテキスト要約にフォールバック。
             data = {"summary": provider.complete(prompt, system=prompts.SYSTEM), "topics": []}
-
-        summaries.append(
-            ChunkSummary(
-                start=start,
-                end=end,
-                summary=str(data.get("summary", "")).strip(),
-                topics=[str(t) for t in data.get("topics", []) if str(t).strip()],
-            )
+        return ChunkSummary(
+            start=start,
+            end=end,
+            summary=str(data.get("summary", "")).strip(),
+            topics=[str(t) for t in data.get("topics", []) if str(t).strip()],
         )
-        if on_progress:
-            on_progress(
-                JobStep.SUMMARIZE,
-                (index + 1) / len(chunks),
-                f"{index + 1}/{len(chunks)} 区間",
-            )
 
-    return summaries
+    def report(done: int) -> None:
+        if on_progress:
+            on_progress(JobStep.SUMMARIZE, done / total, f"{done}/{total} 区間")
+
+    # 区間同士は独立しているので並列に投げられる。結果は入力順に戻る。
+    return _map_ordered(summarize_one, targets, report)
 
 
 def _summaries_text(summaries: list[ChunkSummary]) -> str:
@@ -198,28 +236,29 @@ def write_sections(
     limit = int(provider.context_chars * INPUT_BUDGET_RATIO)
     duration = transcript.duration
 
-    sections: list[Section] = []
-    captures: list[Capture] = []
-    remaining_budget = spec.max_captures
-    previous_titles: list[str] = []
+    # 章題は outline 段で出揃っているため、直前までの流れを事前に組み立てられる。
+    # これにより各セクションの執筆が互いに独立し、並列に投げられる。
+    titles = [
+        str(raw.get("title") or f"セクション {index + 1}").strip()
+        for index, raw in enumerate(raw_sections)
+    ]
 
-    for index, raw in enumerate(raw_sections):
-        title = str(raw.get("title") or f"セクション {index + 1}").strip()
+    def write_one(index: int, raw: dict) -> tuple[Section, list[Capture]]:
+        title = titles[index]
         start, end = _section_bounds(raw, duration)
         excerpt = transcript.to_timestamped_text(start, end)
         if not excerpt.strip():
             excerpt = transcript.to_timestamped_text()
 
-        allowed = min(per_section_captures, max(remaining_budget, 0))
         body = provider.complete(
             prompts.section_write_prompt(
                 section_title=title,
                 focus=str(raw.get("focus", "")),
                 timestamped_text=_truncate(excerpt, limit),
                 target_chars=section_chars,
-                max_captures=allowed,
+                max_captures=per_section_captures,
                 language=language,
-                context_note=" → ".join(previous_titles[-3:]),
+                context_note=" → ".join(titles[max(index - 3, 0) : index]),
             ),
             system=prompts.SYSTEM,
             max_tokens=max(1500, section_chars * 3),
@@ -227,18 +266,46 @@ def write_sections(
 
         body = _adjust_length(body, section_chars, provider, language)
         body, section_captures = resolve_markers(
-            body, transcript, id_prefix=f"s{index}", max_captures=allowed
+            body, transcript, id_prefix=f"s{index}", max_captures=per_section_captures
         )
+        return Section(title=title, body=body, start=start, end=end), section_captures
 
-        remaining_budget -= len(section_captures)
-        captures.extend(section_captures)
-        sections.append(Section(title=title, body=body, start=start, end=end))
-        previous_titles.append(title)
-
+    def report(done: int) -> None:
         if on_progress:
-            on_progress(JobStep.WRITE, (index + 1) / count, f"{index + 1}/{count} セクション")
+            on_progress(JobStep.WRITE, done / count, f"{done}/{count} セクション")
+
+    written = _map_ordered(write_one, list(raw_sections), report)
+
+    # 並列化により予算を逐次減算できないので、各セクションには上限を一律に配り、
+    # 全体の合計がプリセットの枚数を超えた分をここで文書順に切り詰める。
+    sections: list[Section] = []
+    captures: list[Capture] = []
+    for section, section_captures in written:
+        sections.append(section)
+        room = spec.max_captures - len(captures)
+        if room <= 0:
+            _drop_captures(section, section_captures)
+            continue
+        if len(section_captures) > room:
+            _drop_captures(section, section_captures[room:])
+            section_captures = section_captures[:room]
+        captures.extend(section_captures)
 
     return sections, captures
+
+
+def _drop_captures(section: Section, dropped: list[Capture]) -> None:
+    """予算超過で不採用になったマーカーを本文から取り除く。
+
+    本文に残したままだと、画像の無いマーカー行がレポートに出てしまう。
+    marker_id の部分一致では s1_1 が s1_10 を巻き込むため、解決済みマーカーの
+    行全体と完全一致させる。
+    """
+    if not dropped:
+        return
+    tokens = {f"[[capture:{capture.marker_id}]]" for capture in dropped}
+    kept = [line for line in section.body.splitlines() if line.strip() not in tokens]
+    section.body = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
 def generate_report(

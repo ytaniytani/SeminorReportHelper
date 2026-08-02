@@ -54,6 +54,36 @@ cp .env.example .env   # API キー等を記入
 | `llm` | anthropic / openai SDK。Ollama のみ使う場合は不要 |
 | `dev` | pytest |
 
+### GPU を使う（強く推奨）
+
+**処理時間の 8〜9 割は文字起こしが占める。** NVIDIA GPU があれば 10〜30 倍速くなるので、
+搭載機では必ず有効にしてほしい。CUDA ライブラリを入れるだけでよい。
+
+```bash
+pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+```
+
+有効になっているかは診断コマンドで確認できる。
+
+```bash
+uv run seminar-report doctor
+```
+
+`デバイス : cuda / float16` と出ていれば GPU が使われている。
+`cpu / int8` なら CPU 実行で、30 分の動画に 15〜40 分かかる。
+
+CUDA ライブラリが揃っていない場合は自動的に CPU へ縮退するため、
+GPU が無い環境でもそのまま動作する。
+
+### 処理時間の目安（30 分の動画・標準）
+
+| 環境 | 文字起こし | 全体 |
+|---|---|---|
+| GPU（CUDA 有効）| 1〜3 分 | **3〜6 分** |
+| CPU のみ | 15〜35 分 | 20〜40 分 |
+
+初回のみ Whisper モデル（medium で約 1.5GB）のダウンロードが入る。
+
 ---
 
 ## 使い方
@@ -87,6 +117,9 @@ uv run seminar-report publish output/seminar --space ENG
 
 # 文字起こしだけ（結果はキャッシュされる）
 uv run seminar-report transcribe-only seminar.mp4
+
+# 実行環境の診断（GPU が使えているかの確認）
+uv run seminar-report doctor
 ```
 
 主なオプション:
@@ -97,6 +130,7 @@ uv run seminar-report transcribe-only seminar.mp4
 | `-c, --chars` | 目標文字数。指定すると `--detail` より優先される |
 | `--max-captures` | 画像の最大枚数 |
 | `-p, --provider` | `claude` / `openai` / `ollama` |
+| `-m, --model` | 使用するモデル名（未指定なら `.env` の既定値）|
 | `--whisper-model` | `tiny` 〜 `large-v3`（既定 `medium`）|
 | `--verify-captures` | Vision で画像の有用性を検証する（品質↑・コスト↑）|
 | `--no-images` | テキストのみのレポート |
@@ -156,6 +190,22 @@ CONFLUENCE_SPACE_KEY=ENG
 文字起こしはパイプライン中で最も重い工程なので、動画の SHA256 とモデル名を
 キーに `.cache/` へ保存される。**同じ動画で詳細度だけ変えて作り直す場合は
 文字起こしを丸ごとスキップする**ため数十秒で完了する。
+
+---
+
+## 困ったときは
+
+まず `uv run seminar-report doctor` を実行する。多くはここで原因が分かる。
+
+| 症状 | 原因と対処 |
+|---|---|
+| 処理がとにかく遅い | GPU が使われていない。`doctor` で `デバイス : cpu` なら [GPU を使う](#gpu-を使う強く推奨)を参照 |
+| 最初の数分、進捗が動かない | 初回の Whisper モデル DL（約 1.5GB）。「モデルを準備しています」と表示される |
+| 「接続が切れました」と出た | ジョブはサーバー側で継続中。自動でポーリングに切り替わり結果まで進む。ブラウザを閉じても、開き直せば復帰する |
+| ブラウザを閉じてしまった | 再度開けば直前のジョブに自動復帰する |
+
+処理中のジョブはサーバープロセスが持っているため、**uvicorn を停止すると失われる**。
+`--reload` を付けているとコード変更のたびに再起動がかかるので、実運用では外すこと。
 
 ---
 

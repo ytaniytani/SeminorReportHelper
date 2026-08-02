@@ -66,6 +66,11 @@ class JobManager:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def recent(self, limit: int = 20) -> list[Job]:
+        """新しい順のジョブ一覧。dict は挿入順を保つのでそれを逆に辿る。"""
+        with self._lock:
+            return list(reversed(list(self._jobs.values())))[:limit]
+
     def _run(self, job: Job) -> None:
         job.status = JobStatus.RUNNING
         try:

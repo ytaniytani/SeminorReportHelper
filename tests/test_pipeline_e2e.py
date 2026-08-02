@@ -29,6 +29,34 @@ def patched(monkeypatch, transcript: Transcript) -> ScriptedProvider:
     return provider
 
 
+def test_model_preparation_is_reported(
+    monkeypatch, sample_video: Path, tmp_path: Path, transcript: Transcript
+) -> None:
+    """モデル準備中の状況が進捗に流れること。
+
+    初回はモデルの DL に数分かかる。ここで無言になると UI 上は停止に見え、
+    利用者に「タイムアウトした」と判断されてしまう。
+    """
+    def fake_transcribe(video, on_status=None, **kwargs):
+        if on_status:
+            on_status("medium モデルを読み込んでいます")
+        return transcript
+
+    monkeypatch.setattr(pipeline_module, "transcribe", fake_transcribe)
+    monkeypatch.setattr(pipeline_module, "get_provider", lambda *a, **k: ScriptedProvider())
+
+    events: list[tuple[str, str]] = []
+    run_pipeline(
+        sample_video,
+        tmp_path / "out",
+        PipelineOptions(detail=DetailLevel.BRIEF),
+        on_progress=lambda step, ratio, detail: events.append((step.value, detail)),
+    )
+
+    model_events = [detail for step, detail in events if step == "model"]
+    assert model_events == ["medium モデルを読み込んでいます"]
+
+
 def test_pipeline_produces_report_with_images(
     sample_video: Path, tmp_path: Path, patched: ScriptedProvider
 ) -> None:

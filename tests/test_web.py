@@ -145,6 +145,44 @@ def test_missing_job_returns_404(client: TestClient) -> None:
     assert client.get("/api/jobs/unknown/export").status_code == 404
 
 
+def test_job_list_allows_recovery_after_disconnect(
+    client: TestClient, sample_video: Path
+) -> None:
+    """接続が切れても、一覧から走行中/完了済みのジョブに戻れること。"""
+    job_id = _submit(client, sample_video)
+    _wait_for_job(client, job_id)
+
+    jobs = client.get("/api/jobs").json()["jobs"]
+    entry = next(j for j in jobs if j["job_id"] == job_id)
+
+    assert entry["status"] == "done"
+    assert entry["title"] == "社内AI活用セミナー"
+    assert entry["video"] == sample_video.name
+
+
+def test_job_list_is_newest_first(client: TestClient, sample_video: Path) -> None:
+    first = _submit(client, sample_video)
+    _wait_for_job(client, first)
+    second = _submit(client, sample_video)
+    _wait_for_job(client, second)
+
+    ids = [j["job_id"] for j in client.get("/api/jobs").json()["jobs"]]
+    assert ids.index(second) < ids.index(first)
+
+
+def test_events_stream_reports_completion(client: TestClient, sample_video: Path) -> None:
+    """SSE が進捗イベントと終了通知を届けること。"""
+    job_id = _submit(client, sample_video)
+    with client.stream("GET", f"/api/jobs/{job_id}/events") as response:
+        assert response.status_code == 200
+        body = "".join(response.iter_text())
+
+    assert "event: end" in body
+    assert '"status": "done"' in body or '"status":"done"' in body
+    # 各工程の進捗が流れている
+    assert '"step":"render"' in body
+
+
 def test_image_path_traversal_is_blocked(client: TestClient, sample_video: Path) -> None:
     job_id = _submit(client, sample_video)
     _wait_for_job(client, job_id)
