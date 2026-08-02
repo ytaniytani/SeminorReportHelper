@@ -35,6 +35,11 @@
             <select id="provider"></select>
           </label>
           <label>
+            モデル <span class="hint">（一覧から選択、または直接入力）</span>
+            <input type="text" id="model" list="model-list" placeholder="既定のモデルを使う" />
+            <datalist id="model-list"></datalist>
+          </label>
+          <label>
             Whisper モデル
             <select id="whisper-model">
               <option value="">設定値を使う</option>

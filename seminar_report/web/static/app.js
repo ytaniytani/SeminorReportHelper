@@ -41,10 +41,27 @@ async function init() {
   }
   provider.value = config.current_provider;
 
+  updateModelChoices();
+  provider.addEventListener("change", updateModelChoices);
+
   if (!config.confluence_configured) {
     $("publish").disabled = true;
     $("publish").title = ".env に Confluence の接続情報が未設定です";
   }
+}
+
+function updateModelChoices() {
+  const providerName = $("provider").value;
+  const list = $("model-list");
+  list.innerHTML = "";
+  for (const name of config.model_choices[providerName] || []) {
+    const option = document.createElement("option");
+    option.value = name;
+    list.appendChild(option);
+  }
+  const modelInput = $("model");
+  modelInput.value = "";
+  modelInput.placeholder = `既定（${config.current_models[providerName] ?? "未設定"}）を使う`;
 }
 
 // ---- ファイル選択 ----
@@ -86,6 +103,7 @@ $("upload-form").addEventListener("submit", async (event) => {
   form.append("detail", $("detail").value);
   form.append("target_chars", $("target-chars").value);
   form.append("provider", $("provider").value);
+  form.append("model", $("model").value);
   form.append("whisper_model", $("whisper-model").value);
   form.append("audio_language", $("audio-language").value);
   form.append("verify_captures", $("verify-captures").checked ? "true" : "false");

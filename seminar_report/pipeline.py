@@ -33,6 +33,7 @@ class PipelineOptions:
     target_chars: int | None = None
     max_captures: int | None = None
     provider: str | None = None
+    model: str | None = None
     language: str | None = None
     whisper_model: str | None = None
     whisper_language: str | None = None
@@ -85,7 +86,8 @@ def run_pipeline(
         raise RuntimeError("文字起こしの結果が空でした。音声が含まれているか確認してください。")
 
     # 3-5. レポート生成
-    provider = get_provider(options.provider)
+    provider_kwargs = {"model": options.model} if options.model else {}
+    provider = get_provider(options.provider, **provider_kwargs)
     spec = resolve_detail(options.detail, options.target_chars, options.max_captures)
     report = generate_report(transcript, provider, spec, language, on_progress)
     report.source_video = video.name

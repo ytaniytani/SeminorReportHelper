@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from seminar_report.capture import swap_capture
 from seminar_report.config import get_settings
-from seminar_report.llm import PROVIDERS
+from seminar_report.llm import MODEL_CHOICES, PROVIDERS
 from seminar_report.models import DetailLevel, JobStatus, Report
 from seminar_report.pipeline import PipelineOptions, export_zip, write_outputs
 from seminar_report.report.detail import PRESETS
@@ -37,6 +37,12 @@ async def config() -> dict:
     return {
         "providers": list(PROVIDERS),
         "current_provider": settings.llm_provider,
+        "model_choices": MODEL_CHOICES,
+        "current_models": {
+            "claude": settings.claude_model,
+            "openai": settings.openai_model,
+            "ollama": settings.ollama_model,
+        },
         "presets": [
             {
                 "value": level.value,
@@ -58,6 +64,7 @@ async def create_job(
     detail: str = Form(DetailLevel.STANDARD.value),
     target_chars: str = Form(""),
     provider: str = Form(""),
+    model: str = Form(""),
     whisper_model: str = Form(""),
     audio_language: str = Form(""),
     verify_captures: str = Form("false"),
@@ -79,6 +86,7 @@ async def create_job(
         detail=DetailLevel(detail),
         target_chars=chars,
         provider=provider or None,
+        model=model or None,
         whisper_model=whisper_model or None,
         whisper_language=audio_language or None,
         verify_captures=verify_captures == "true",
