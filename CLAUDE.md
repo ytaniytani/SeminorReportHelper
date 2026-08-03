@@ -14,9 +14,13 @@
 セミナー録画（.mp4）から、画像付きの日本語レポートを生成し Confluence に反映するツール。
 
 - 文字起こし：faster-whisper（ローカル完結、GPU対応）
-- レポート生成：Claude / OpenAI / Ollama
+- レポート生成：Claude / OpenAI（従量課金・要クレジットカード） / Ollama（無料・ローカル完結）
 - フレーム抽出：ffmpeg + numpy
 - Web UI：FastAPI + HTML/JS
+
+**費用について**：LLM プロバイダの選択肢を案内する際は、`claude` / `openai` が
+従量課金であること（Claude.ai / ChatGPT の月額契約とは別会計）を必ず明記する。
+セットアップの終盤（API キー取得時）ではなく、最初の案内の時点で伝えること。
 
 ## 開発ガイドライン
 

@@ -201,6 +201,8 @@ def doctor() -> None:
     configured = "[green]設定済み[/]" if keys.get(current) else "[red]APIキー未設定[/]"
     console.print(f"  認証          : {configured}")
     console.print(f"  同時実行数    : {settings.llm_concurrency}")
+    if current in ("claude", "openai"):
+        console.print("  [dim]※ 従量課金のプロバイダです。無料で試すなら ollama も選べます[/]")
 
     console.print()
     console.print("[bold]Confluence[/]")

@@ -34,6 +34,25 @@ LLM が実在しない時刻を返す可能性があるため、`report/markers.
 
 ---
 
+## LLM プロバイダと費用
+
+レポート生成には LLM を使う。プロバイダによって費用が異なるので、
+API キーを取得する前に確認してほしい。
+
+| プロバイダ | 費用 | 備考 |
+|---|---|---|
+| `claude` | 従量課金（要クレジットカード登録） | 品質重視。動画の長さ・詳細度によりコストは変動する |
+| `openai` | 従量課金（要クレジットカード登録） | 同上 |
+| `ollama` | **無料**（ローカル実行） | 別途 [Ollama](https://ollama.com) 本体とモデル（数GB）のダウンロードが必要。Vision（`--verify-captures`）は自動でスキップされる |
+
+`claude` / `openai` は Claude.ai や ChatGPT の月額契約とは別会計の API 利用料。
+最新の料金は各社の公式ページ（[Anthropic](https://www.anthropic.com/pricing) /
+[OpenAI](https://openai.com/pricing)）を参照。
+
+費用をかけずに試したい場合は `.env` の `SRH_LLM_PROVIDER=ollama` を選ぶ。
+
+---
+
 ## セットアップ
 
 ```bash
