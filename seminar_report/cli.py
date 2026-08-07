@@ -46,6 +46,12 @@ def run(
     language: str | None = typer.Option(None, "--language", help="レポートの出力言語"),
     audio_language: str | None = typer.Option(None, "--audio-language", help="音声の言語(既定は自動判定)"),
     verify_captures: bool = typer.Option(False, "--verify-captures", help="Vision で画像を検証する(コスト増)"),
+    crop: str | None = typer.Option(
+        None,
+        "--crop",
+        help="キャプチャの切り出し矩形 left,top,right,bottom(0〜1の割合)。"
+        "登壇者映像やロゴを除いてスライド部分だけを残したい場合に指定する",
+    ),
     no_images: bool = typer.Option(False, "--no-images", help="画像を入れない"),
     no_cache: bool = typer.Option(False, "--no-cache", help="文字起こしキャッシュを使わない"),
     publish: bool = typer.Option(False, "--publish", help="Confluence に投稿する"),
@@ -53,8 +59,18 @@ def run(
     title: str | None = typer.Option(None, "--title", help="Confluence ページタイトル"),
 ) -> None:
     """動画からレポートを生成する。"""
+    from seminar_report.media.frames import parse_crop_box
+
     settings = get_settings()
     output_dir = out or settings.output_dir / video.stem
+
+    capture_crop = None
+    if crop:
+        try:
+            capture_crop = parse_crop_box(crop)
+        except ValueError as exc:
+            console.print(f"[red]--crop が不正です: {exc}[/]")
+            raise typer.Exit(1) from exc
 
     options = PipelineOptions(
         detail=detail,
@@ -68,6 +84,7 @@ def run(
         verify_captures=verify_captures,
         use_cache=not no_cache,
         include_images=not no_images,
+        capture_crop=capture_crop,
     )
 
     result = run_pipeline(video, output_dir, options, _progress_printer())

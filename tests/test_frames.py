@@ -9,9 +9,11 @@ from PIL import Image, ImageFilter
 from seminar_report.media.frames import (
     FrameMetrics,
     dhash,
+    extract_candidates,
     hamming_distance,
     laplacian_variance,
     luma_std,
+    parse_crop_box,
     select_best,
 )
 
@@ -117,3 +119,52 @@ def test_blurred_frame_does_not_outrank_sharp_one(tmp_path) -> None:
     ]
     best = select_best(candidates)
     assert best is not None and best.path.name == "sharp.png"
+
+
+# ---- crop ----
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["0.1,0.1,0.9", "a,b,c,d", "0.1,0.1,0.9,1.5", "0.5,0.1,0.4,0.9", "0.1,0.5,0.9,0.4"],
+)
+def test_parse_crop_box_rejects_invalid_input(text: str) -> None:
+    with pytest.raises(ValueError):
+        parse_crop_box(text)
+
+
+def test_parse_crop_box_accepts_valid_fractions() -> None:
+    assert parse_crop_box("0.02,0.13,0.76,0.87") == (0.02, 0.13, 0.76, 0.87)
+
+
+def test_parse_crop_box_strips_whitespace() -> None:
+    assert parse_crop_box(" 0.0 , 0.0 , 1.0 , 1.0 ") == (0.0, 0.0, 1.0, 1.0)
+
+
+def test_extract_candidates_applies_crop(sample_video, tmp_path) -> None:
+    """crop 指定時、実際にアスペクト比が変わった画像が出ること。
+
+    テスト動画は 640x360(16:9)。左半分だけ・縦は全体を切り出すと
+    320x360(8:9)になり、幅 1280 に拡大した高さは無指定時と明確に変わる
+    ので、crop が実際に効いているかを検出できる。
+    """
+    crop = (0.0, 0.0, 0.5, 1.0)
+    candidates = extract_candidates(
+        sample_video, 5.0, tmp_path, prefix="crop-test", duration=70.0, count=1, crop=crop
+    )
+    assert len(candidates) == 1
+    with Image.open(candidates[0].path) as image:
+        width, height = image.size
+    assert width == 1280
+    assert height == pytest.approx(1280 * 360 / 320, abs=2)
+
+
+def test_extract_candidates_without_crop_uses_full_frame(sample_video, tmp_path) -> None:
+    candidates = extract_candidates(
+        sample_video, 5.0, tmp_path, prefix="nocrop-test", duration=70.0, count=1
+    )
+    assert len(candidates) == 1
+    with Image.open(candidates[0].path) as image:
+        width, height = image.size
+    assert width == 1280
+    assert height == pytest.approx(1280 * 360 / 640, abs=2)

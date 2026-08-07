@@ -15,6 +15,7 @@ from seminar_report.capture import build_captures
 from seminar_report.config import get_settings
 from seminar_report.llm import get_provider
 from seminar_report.media.audio import probe_duration
+from seminar_report.media.frames import CropBox
 from seminar_report.models import DetailLevel, JobStep, Report, Transcript
 from seminar_report.render.confluence_storage import render_storage
 from seminar_report.render.markdown import render_markdown
@@ -40,6 +41,9 @@ class PipelineOptions:
     verify_captures: bool = False
     use_cache: bool = True
     include_images: bool = True
+    capture_crop: CropBox | None = None
+    """キャプチャ画像の切り出し矩形 (left, top, right, bottom)。0〜1 の割合。
+    登壇者映像やロゴを含む画面からスライド部分だけを切り出したい場合に使う。"""
 
 
 @dataclass
@@ -103,6 +107,7 @@ def run_pipeline(
             provider=provider,
             verify=options.verify_captures,
             on_progress=on_progress,
+            crop=options.capture_crop,
         )
     else:
         for capture in report.captures:

@@ -138,6 +138,10 @@ uv run seminar-report run seminar.mp4 --chars 4000
 # 詳細版を作り、そのまま Confluence に投稿
 uv run seminar-report run seminar.mp4 -d detailed --publish --space ENG
 
+# 登壇者映像やロゴを除き、スライド部分だけを画像として切り出す
+# left,top,right,bottom を画面全体に対する割合(0〜1)で指定する
+uv run seminar-report run seminar.mp4 --crop 0.02,0.13,0.76,0.87
+
 # 生成済みレポートを後から投稿
 uv run seminar-report publish output/seminar --space ENG
 
@@ -159,6 +163,7 @@ uv run seminar-report doctor
 | `-m, --model` | 使用するモデル名（未指定なら `.env` の既定値）|
 | `--whisper-model` | `tiny` 〜 `large-v3`（既定 `medium`）|
 | `--verify-captures` | Vision で画像の有用性を検証する（品質↑・コスト↑）|
+| `--crop` | キャプチャの切り出し矩形 `left,top,right,bottom`（0〜1の割合）。登壇者映像やロゴを除きたい場合に指定 |
 | `--no-images` | テキストのみのレポート |
 | `--no-cache` | 文字起こしキャッシュを使わない |
 

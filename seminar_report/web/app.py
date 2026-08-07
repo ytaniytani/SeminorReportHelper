@@ -75,6 +75,7 @@ async def create_job(
     audio_language: str = Form(""),
     verify_captures: str = Form("false"),
     include_images: str = Form("true"),
+    crop: str = Form(""),
 ) -> dict:
     settings = get_settings()
     if not video.filename:
@@ -94,6 +95,16 @@ async def create_job(
     await asyncio.to_thread(save)
 
     chars = int(target_chars) if target_chars.strip().isdigit() else None
+
+    capture_crop = None
+    if crop.strip():
+        from seminar_report.media.frames import parse_crop_box
+
+        try:
+            capture_crop = parse_crop_box(crop)
+        except ValueError as exc:
+            raise HTTPException(400, f"crop が不正です: {exc}") from exc
+
     options = PipelineOptions(
         detail=DetailLevel(detail),
         target_chars=chars,
@@ -103,6 +114,7 @@ async def create_job(
         whisper_language=audio_language or None,
         verify_captures=verify_captures == "true",
         include_images=include_images == "true",
+        capture_crop=capture_crop,
     )
 
     job = manager.create(video_path, job_root / "output", options)

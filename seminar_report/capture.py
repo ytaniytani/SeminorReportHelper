@@ -12,7 +12,7 @@ from pathlib import Path
 
 from seminar_report.llm.base import LLMError, LLMProvider
 from seminar_report.llm.prompts import CAPTION_VERIFY_PROMPT
-from seminar_report.media.frames import extract_candidates, select_best
+from seminar_report.media.frames import CropBox, extract_candidates, select_best
 from seminar_report.models import JobStep, Report
 
 ProgressFn = Callable[[JobStep, float, str], None]
@@ -47,8 +47,14 @@ def build_captures(
     provider: LLMProvider | None = None,
     verify: bool = False,
     on_progress: ProgressFn | None = None,
+    crop: CropBox | None = None,
 ) -> Report:
-    """各マーカーについてフレームを抽出し、最良の 1 枚を採用する。"""
+    """各マーカーについてフレームを抽出し、最良の 1 枚を採用する。
+
+    `crop` を指定すると、登壇者映像やロゴなどを含む画面からスライド部分
+    だけを切り出せる。画面レイアウトは動画を通じて固定であることが多いため、
+    1 本の動画に対して 1 つの矩形を全キャプチャに一律で適用する。
+    """
     if not report.captures:
         return report
 
@@ -68,6 +74,7 @@ def build_captures(
             work_dir,
             prefix=capture.marker_id,
             duration=report.duration,
+            crop=crop,
         )
         # 自動選抜が失敗しても、UI から手で選び直せるよう候補は常に残す
         capture.candidates = [c.path for c in candidates]

@@ -95,9 +95,53 @@ def hamming_distance(a: int, b: int) -> int:
     return bin(a ^ b).count("1")
 
 
-def _extract_one(video: Path, time: float, dest: Path, width: int = 1280) -> bool:
+CropBox = tuple[float, float, float, float]
+"""(left, top, right, bottom)。元動画の幅・高さに対する割合(0〜1)。"""
+
+
+def parse_crop_box(text: str) -> CropBox:
+    """`"left,top,right,bottom"` 形式(0〜1 の割合)を CropBox にする。
+
+    CLI の `--crop` と Web UI の入力欄で共通のフォーマットを使うための
+    パーサ。値が範囲外・順序が不正な場合は ValueError を送出する。
+    """
+    parts = [p.strip() for p in text.split(",")]
+    if len(parts) != 4:
+        raise ValueError("crop は left,top,right,bottom の4つの数値で指定してください")
+    try:
+        left, top, right, bottom = (float(p) for p in parts)
+    except ValueError as exc:
+        raise ValueError("crop の値は数値で指定してください") from exc
+
+    if not all(0.0 <= v <= 1.0 for v in (left, top, right, bottom)):
+        raise ValueError("crop の値は 0〜1 の範囲で指定してください")
+    if left >= right or top >= bottom:
+        raise ValueError("crop は left<right かつ top<bottom である必要があります")
+    return (left, top, right, bottom)
+
+
+def _crop_filter(crop: CropBox) -> str:
+    """クロップ矩形を ffmpeg の crop フィルタ式にする。
+
+    実ピクセル値を得るための解像度プローブが要らないよう、`iw`/`ih`
+    (入力の幅・高さ)を使った式のまま渡す。スライドと登壇者映像が
+    合成された画面から、スライド部分だけを切り出す用途を想定している。
+    """
+    left, top, right, bottom = crop
+    return f"crop=iw*{right - left:.6f}:ih*{bottom - top:.6f}:iw*{left:.6f}:ih*{top:.6f}"
+
+
+def _extract_one(
+    video: Path,
+    time: float,
+    dest: Path,
+    width: int = 1280,
+    crop: CropBox | None = None,
+) -> bool:
     """指定時刻のフレームを 1 枚書き出す。成功したら True。"""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    filters = [_crop_filter(crop)] if crop else []
+    filters.append(f"scale={width}:-2:flags=lanczos")
     proc = subprocess.run(
         [
             ffmpeg_path(),
@@ -111,7 +155,7 @@ def _extract_one(video: Path, time: float, dest: Path, width: int = 1280) -> boo
             "-frames:v",
             "1",
             "-vf",
-            f"scale={width}:-2:flags=lanczos",
+            ",".join(filters),
             "-q:v",
             "2",
             str(dest),
@@ -129,6 +173,7 @@ def extract_candidates(
     prefix: str,
     duration: float | None = None,
     count: int = CANDIDATES_PER_CAPTURE,
+    crop: CropBox | None = None,
 ) -> list[FrameMetrics]:
     """基準時刻の周辺から候補フレームを取り出し、画質指標を付けて返す。"""
     start = max(time - WINDOW_BEFORE, 0.0)
@@ -143,7 +188,7 @@ def extract_candidates(
     for index in range(count):
         at = start + step * index
         dest = out_dir / f"{prefix}_c{index}.jpg"
-        if not _extract_one(video, at, dest):
+        if not _extract_one(video, at, dest, crop=crop):
             continue
         try:
             with Image.open(dest) as image:

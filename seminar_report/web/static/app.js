@@ -168,6 +168,7 @@ $("upload-form").addEventListener("submit", async (event) => {
   form.append("audio_language", $("audio-language").value);
   form.append("verify_captures", $("verify-captures").checked ? "true" : "false");
   form.append("include_images", $("include-images").checked ? "true" : "false");
+  form.append("crop", $("crop").value);
 
   showView("progress");
   $("log").innerHTML = "";
