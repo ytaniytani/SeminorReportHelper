@@ -65,6 +65,27 @@
           </label>
         </div>
 
+        <div class="crop-picker">
+          <button type="button" id="crop-picker-toggle" class="ghost">画像で範囲を指定</button>
+          <div id="crop-picker-panel" class="crop-picker-panel" hidden>
+            <div class="crop-drop" id="crop-drop" tabindex="0">
+              <input type="file" id="crop-image-input" accept="image/*" hidden />
+              <p id="crop-drop-label">
+                ここに画像をドラッグ&amp;ドロップ、貼り付け（Ctrl+V）、またはクリックして選択
+                <br /><span class="hint">動画のスクリーンショットなど、切り出したい画面と同じ構図の画像を使ってください</span>
+              </p>
+            </div>
+            <div class="crop-canvas-wrap" id="crop-canvas-wrap" hidden>
+              <img id="crop-preview-image" alt="範囲指定用のプレビュー画像" draggable="false" />
+              <div id="crop-rect" class="crop-rect"></div>
+            </div>
+            <p class="hint" id="crop-picker-readout"></p>
+            <div class="crop-picker-actions">
+              <button type="button" id="crop-picker-clear" class="ghost">画像をクリア</button>
+            </div>
+          </div>
+        </div>
+
         <div class="checks">
           <label class="check"><input type="checkbox" id="include-images" checked /> 画像を入れる</label>
           <label class="check"><input type="checkbox" id="verify-captures" /> AI で画像を検証する（精度↑・コスト↑）</label>

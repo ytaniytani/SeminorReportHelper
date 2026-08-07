@@ -75,6 +75,53 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .check { display: flex; align-items: center; gap: 6px; font-weight: 400; font-size: 14px; }
 .check input { margin: 0; }
 
+.crop-picker { margin-top: 16px; }
+.crop-picker-panel {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.crop-drop {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.crop-drop:hover, .crop-drop.over { border-color: var(--accent); background: #eff5ff; }
+.crop-drop p { margin: 0; font-size: 13px; }
+
+.crop-canvas-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  user-select: none;
+}
+/* display を指定した要素は [hidden] の既定スタイルより author 側が勝つため
+   明示的に上書きする(付けないと hidden=true でも表示されたままになる)。 */
+.crop-canvas-wrap[hidden] { display: none; }
+.crop-canvas-wrap img {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  cursor: crosshair;
+  border-radius: 6px;
+}
+.crop-rect {
+  position: absolute;
+  display: none;
+  border: 2px solid var(--accent);
+  background: rgba(74, 108, 247, .15);
+  pointer-events: none;
+}
+
+.crop-picker-actions { margin-top: 12px; }
+.crop-picker-actions button { margin-top: 0; }
+
 button {
   margin-top: 24px;
   padding: 11px 22px;

@@ -152,6 +152,136 @@ function onFileChosen() {
   $("submit").disabled = false;
 }
 
+// ---- 切り出し範囲ピッカー ----
+// 画像を貼り付け/ドロップし、その上でドラッグした矩形を "crop" 欄へ
+// リアルタイムに反映する。値は画像の表示サイズに対する割合(0〜1)なので、
+// 動画のフレームと縦横比さえ合っていれば実ピクセルサイズは問わない。
+(() => {
+  const cropInput = $("crop");
+  const toggle = $("crop-picker-toggle");
+  const panel = $("crop-picker-panel");
+  const dropZone = $("crop-drop");
+  const fileInput = $("crop-image-input");
+  const canvasWrap = $("crop-canvas-wrap");
+  const previewImage = $("crop-preview-image");
+  const rectEl = $("crop-rect");
+  const readout = $("crop-picker-readout");
+  const clearBtn = $("crop-picker-clear");
+
+  let objectUrl = null;
+  let dragOrigin = null; // { x, y, imageRect } (imageRect は表示中の img の境界)
+
+  toggle.addEventListener("click", () => {
+    const opening = panel.hidden;
+    panel.hidden = !opening;
+    toggle.textContent = opening ? "画像ピッカーを閉じる" : "画像で範囲を指定";
+  });
+
+  dropZone.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files[0]) loadImage(fileInput.files[0]);
+  });
+
+  dropZone.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    dropZone.classList.add("over");
+  });
+  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("over"));
+  dropZone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropZone.classList.remove("over");
+    const file = event.dataTransfer.files[0];
+    if (file) loadImage(file);
+  });
+
+  // クリップボード貼り付け(Ctrl+V)。ピッカーを開いている間だけ拾う。
+  document.addEventListener("paste", (event) => {
+    if (panel.hidden) return;
+    const item = [...(event.clipboardData?.items || [])].find(
+      (i) => i.type && i.type.startsWith("image/")
+    );
+    if (!item) return;
+    const file = item.getAsFile();
+    if (file) loadImage(file);
+  });
+
+  function loadImage(file) {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    previewImage.onload = () => {
+      dropZone.hidden = true;
+      canvasWrap.hidden = false;
+      rectEl.style.display = "none";
+      readout.textContent = "画像上をドラッグして範囲を選択してください";
+    };
+    previewImage.src = objectUrl;
+  }
+
+  clearBtn.addEventListener("click", () => {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    }
+    previewImage.removeAttribute("src");
+    canvasWrap.hidden = true;
+    dropZone.hidden = false;
+    rectEl.style.display = "none";
+    readout.textContent = "";
+  });
+
+  previewImage.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    const imageRect = previewImage.getBoundingClientRect();
+    dragOrigin = {
+      x: clamp(event.clientX - imageRect.left, 0, imageRect.width),
+      y: clamp(event.clientY - imageRect.top, 0, imageRect.height),
+      imageRect,
+    };
+    rectEl.style.display = "block";
+  });
+
+  window.addEventListener("mousemove", (event) => {
+    if (!dragOrigin) return;
+    const { imageRect } = dragOrigin;
+    const x = clamp(event.clientX - imageRect.left, 0, imageRect.width);
+    const y = clamp(event.clientY - imageRect.top, 0, imageRect.height);
+
+    const left = Math.min(dragOrigin.x, x);
+    const top = Math.min(dragOrigin.y, y);
+    const width = Math.abs(x - dragOrigin.x);
+    const height = Math.abs(y - dragOrigin.y);
+
+    rectEl.style.left = `${left}px`;
+    rectEl.style.top = `${top}px`;
+    rectEl.style.width = `${width}px`;
+    rectEl.style.height = `${height}px`;
+
+    applyFractions(
+      left / imageRect.width,
+      top / imageRect.height,
+      (left + width) / imageRect.width,
+      (top + height) / imageRect.height
+    );
+  });
+
+  window.addEventListener("mouseup", () => {
+    dragOrigin = null;
+  });
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function applyFractions(left, top, right, bottom) {
+    // 幅・高さ 0 のドラッグ開始直後は crop 欄を汚さない
+    if (right - left < 0.01 || bottom - top < 0.01) return;
+    const fmt = (v) => v.toFixed(3);
+    cropInput.value = `${fmt(left)},${fmt(top)},${fmt(right)},${fmt(bottom)}`;
+    readout.textContent =
+      `left=${fmt(left)} top=${fmt(top)} right=${fmt(right)} bottom=${fmt(bottom)}`;
+  }
+})();
+
 // ---- 送信 ----
 $("upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();
