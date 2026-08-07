@@ -106,7 +106,7 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .crop-canvas-wrap[hidden] { display: none; }
 .crop-canvas-wrap img {
   display: block;
-  max-width: 100%;
+  max-width: min(800px, 100%);
   max-height: 480px;
   cursor: crosshair;
   border-radius: 6px;
@@ -114,8 +114,8 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .crop-rect {
   position: absolute;
   display: none;
-  border: 2px solid var(--accent);
-  background: rgba(74, 108, 247, .15);
+  border: 2px solid #dc2626;
+  background: rgba(220, 38, 38, .15);
   pointer-events: none;
 }
 
