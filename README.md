@@ -229,6 +229,7 @@ CONFLUENCE_SPACE_KEY=ENG
 | ブラウザに見慣れない JSON が出る | ポート 8000 を別アプリ（Epic Games Launcher など）が使用中。`--port 8001` で起動し直す |
 | アップロードが終わらない | 数百MB〜GB の動画は転送に数分かかる。進捗バーの数値が伸びていれば正常 |
 | `cublas64_12.dll is not found` | CUDA ライブラリが未導入か、`pip install`（`uv` 無し）で別の Python に入っている。`uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` を実行し、`doctor` の「CUDA ライブラリ」欄を確認する |
+| `` `temperature` is deprecated `` | Claude Opus 4.7 以降と Sonnet 5 では廃止されたパラメータ。本ツールは送らないので、古いコードのままなら `git pull` する |
 | 処理がとにかく遅い | GPU が使われていない。`doctor` で `デバイス : cpu` なら [GPU を使う](#gpu-を使う強く推奨)を参照 |
 | 最初の数分、進捗が動かない | 初回の Whisper モデル DL（約 1.5GB）。「モデルを準備しています」と表示される |
 | 「接続が切れました」と出た | ジョブはサーバー側で継続中。自動でポーリングに切り替わり結果まで進む。ブラウザを閉じても、開き直せば復帰する |

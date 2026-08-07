@@ -40,10 +40,13 @@ class ClaudeProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.3,
     ) -> str:
+        # temperature / top_p / top_k は Claude Opus 4.7 以降と Sonnet 5 で廃止され、
+        # 送ると 400 (`temperature` is deprecated for this model) になる。
+        # 既定モデルがこの世代なので送らない。出力の振れ幅はプロンプト側で制御する。
+        # 引数は openai / ollama と共通のインターフェースのため残している。
         kwargs = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "messages": [{"role": "user", "content": prompt}],
         }
         if system:
