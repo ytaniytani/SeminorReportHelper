@@ -3,9 +3,10 @@
 並列にしても「出力順が入力順と一致する」という不変条件が崩れないことを
 確認する。ここが崩れると、章の順序が入れ替わってしまう。
 
-キャプチャ予算については、見出しごとに最低1枚は入れる保証があるため、
-見出し数が予算を上回る場合は結果がプリセット値を超えうる
-(`max(予算, 見出し数)` が実質的な上限)。
+キャプチャ枚数については、見出しごとに最低1枚は入れる保証がある一方、
+章をまたいだ全体予算での切り詰めは行わない(画像点数が多いこと自体は
+問題ではないため)。プリセットの max_captures は各章の目安上限として
+使われるだけで、章の合計枚数を超えない厳密な総量制限ではない。
 """
 
 from __future__ import annotations
@@ -95,33 +96,15 @@ def test_section_order_matches_outline(transcript: Transcript) -> None:
 
 @pytest.mark.parametrize("budget", [0, 1, 2, 3])
 def test_capture_budget_upper_bound_respects_the_guarantee(transcript: Transcript, budget: int) -> None:
-    """予算を切り詰めても、見出しごとの最低1枚保証分より少なくはならない。
+    """budget=0(画像なしモード)以外では、見出しごとの最低1枚保証が働く。
 
-    ScriptedProvider は常に2セクション、各1個の有効なマーカーを返すため、
-    実質的な上限は max(budget, セクション数) になる(budget=0 は保証自体が
-    働かないため例外)。
+    ScriptedProvider は常に2セクション、各1個の有効なマーカーしか出さない
+    ため、この組み合わせでは総数は max(budget, セクション数) を超えない。
     """
     spec = resolve_detail(DetailLevel.STANDARD, max_captures=budget)
     report = generate_report(transcript, ScriptedProvider(), spec, "日本語")
 
     assert len(report.captures) <= max(budget, len(report.sections))
-
-
-def test_dropped_markers_are_removed_from_body(transcript: Transcript) -> None:
-    """予算超過で落としたマーカーが本文に残らないこと。
-
-    残っていると、画像の無いマーカー行がそのままレポートに出てしまう。
-    """
-    spec = resolve_detail(DetailLevel.STANDARD, max_captures=1)
-    report = generate_report(transcript, ScriptedProvider(), spec, "日本語")
-
-    kept = {c.marker_id for c in report.captures}
-    for section in report.sections:
-        for line in section.body.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("[[capture:"):
-                marker_id = stripped.removeprefix("[[capture:").removesuffix("]]")
-                assert marker_id in kept, f"落としたはずのマーカーが残っている: {stripped}"
 
 
 class MultiCaptureProvider(LLMProvider):
@@ -159,18 +142,44 @@ class MultiCaptureProvider(LLMProvider):
         )
 
 
-def test_budget_trims_but_keeps_one_per_section(transcript: Transcript) -> None:
-    """4 セクション × 各 2 枚を要求すると、2 枚目以降は上限(3)で切り詰められる。
+def test_dropped_markers_are_removed_from_body(transcript: Transcript) -> None:
+    """章あたりの目安上限で落としたマーカーが本文に残らないこと。
 
-    ただし見出しごとの最低1枚保証が優先されるため、4 セクションぶんの
-    1 枚ずつは残り、合計は指定した上限(3)を超えて 4 になる。
+    残っていると、画像の無いマーカー行がそのままレポートに出てしまう。
+    """
+    spec = resolve_detail(DetailLevel.STANDARD, max_captures=1)
+    report = generate_report(transcript, MultiCaptureProvider(), spec, "日本語")
+
+    kept = {c.marker_id for c in report.captures}
+    for section in report.sections:
+        for line in section.body.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[[capture:"):
+                marker_id = stripped.removeprefix("[[capture:").removesuffix("]]")
+                assert marker_id in kept, f"落としたはずのマーカーが残っている: {stripped}"
+
+
+def test_preset_budget_does_not_cap_total_captures(transcript: Transcript) -> None:
+    """画像点数が多いこと自体は問題ではないため、プリセット値を超えてよい。
+
+    4 セクション × 各 2 枚(合計 8)がプリセットの目安(3)を上回っていても、
+    章をまたいだ全体予算での切り詰めはもう行わない。
     """
     spec = resolve_detail(DetailLevel.STANDARD, max_captures=3)
     report = generate_report(transcript, MultiCaptureProvider(), spec, "日本語")
 
-    assert len(report.captures) == 4
-    # marker_id が重複していない(切り詰めで取り違えていない)
-    assert len({c.marker_id for c in report.captures}) == 4
-    # 各セクションに最低1枚は残っている
+    assert len(report.captures) == 8
+    assert len({c.marker_id for c in report.captures}) == 8
     for section in report.sections:
-        assert "[[capture:" in section.body
+        assert section.body.count("[[capture:") == 2
+
+
+def test_tight_budget_still_caps_within_a_single_section(transcript: Transcript) -> None:
+    """章あたりの目安上限そのものは残る。1 に絞ると 2 枚目は落ちて本文からも消える。"""
+    spec = resolve_detail(DetailLevel.STANDARD, max_captures=1)
+    report = generate_report(transcript, MultiCaptureProvider(), spec, "日本語")
+
+    assert len(report.captures) == 4
+    for section in report.sections:
+        assert section.body.count("[[capture:") == 1
+        assert "図2" not in section.body

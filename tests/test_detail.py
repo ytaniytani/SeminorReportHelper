@@ -38,8 +38,12 @@ def test_section_budget_splits_body_chars() -> None:
     assert 100 < per_section < spec.target_chars
 
 
-def test_at_least_one_capture_allowed_per_section_when_budget_exists() -> None:
+def test_captures_per_section_is_not_split_evenly_across_sections() -> None:
+    """章数で均等分割せず、全体の目安枚数をそのまま各章の上限として渡す。
+
+    絞り込んだレポートのように重要な瞬間が特定の章に集中する場合でも
+    足りなくならないようにするため。
+    """
     spec = resolve_detail(DetailLevel.BRIEF)
-    # 画像 3 枚に対しセクションが 10 でも、各セクション 1 枚は許可する
-    assert spec.captures_per_section(10) == 1
+    assert spec.captures_per_section(10) == spec.max_captures == 3
     assert resolve_detail(DetailLevel.DETAILED, max_captures=0).captures_per_section(5) == 0

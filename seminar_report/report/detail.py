@@ -28,14 +28,17 @@ class DetailSpec:
         return max(150, body_chars // max(section_count, 1))
 
     def captures_per_section(self, section_count: int) -> int:
-        """1 セクションあたりに許可するキャプチャ数の上限。
+        """1 セクションあたりに許可するキャプチャ数の目安。
 
-        全体の予算を割り振ったうえで、必ず 1 以上は許可する(重要な図が
-        1 枚も入らない事故を防ぐ)。実際に入る枚数は LLM の判断次第。
+        章数で均等に割ってしまうと、内容を絞ったレポート(例:「○○のみ」)
+        のように重要な瞬間が特定の章に集中する場合に足りなくなる。
+        画像点数が多いこと自体は問題ではないため、レポート全体の目安枚数を
+        そのまま各章の目安として渡し、実際に何枚入れるかは章ごとの
+        重要度に応じて LLM に判断させる。
         """
         if self.max_captures <= 0:
             return 0
-        return max(1, -(-self.max_captures // max(section_count, 1)))
+        return max(1, self.max_captures)
 
 
 PRESETS: dict[DetailLevel, DetailSpec] = {

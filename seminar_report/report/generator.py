@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -299,48 +298,16 @@ def write_sections(
 
     written = _map_ordered(write_one, list(raw_sections), report)
 
-    # 並列化により予算を逐次減算できないので、全体の合計が予算を超えた分は
-    # ここで切り詰める。ただし各セクションの 1 枚目は「見出しごとに最低1枚」
-    # の保証なので予算に関わらず必ず残し、超過分は 2 枚目以降からのみ削る。
-    # 見出し数がプリセットの max_captures を上回る場合、実際の採用枚数が
-    # プリセット値を超えることがある(保証を優先するため)。
+    # 画像点数が多いこと自体は問題ではないため、章をまたいだ全体予算での
+    # 切り詰めは行わない。各章の枚数は resolve_markers 側の目安上限
+    # (captures_per_section)と、見出しごとに最低1枚の保証だけで決まる。
     sections: list[Section] = []
-    per_section_captures_list: list[list[Capture]] = []
+    captures: list[Capture] = []
     for section, section_captures in written:
         sections.append(section)
-        per_section_captures_list.append(section_captures)
-
-    keep_counts = [min(1, len(caps)) for caps in per_section_captures_list]
-    remaining = spec.max_captures - sum(keep_counts)
-    if remaining > 0:
-        for index, caps in enumerate(per_section_captures_list):
-            extra = min(remaining, len(caps) - keep_counts[index])
-            keep_counts[index] += extra
-            remaining -= extra
-            if remaining <= 0:
-                break
-
-    captures: list[Capture] = []
-    for section, caps, keep in zip(sections, per_section_captures_list, keep_counts):
-        kept, dropped = caps[:keep], caps[keep:]
-        _drop_captures(section, dropped)
-        captures.extend(kept)
+        captures.extend(section_captures)
 
     return sections, captures
-
-
-def _drop_captures(section: Section, dropped: list[Capture]) -> None:
-    """予算超過で不採用になったマーカーを本文から取り除く。
-
-    本文に残したままだと、画像の無いマーカー行がレポートに出てしまう。
-    marker_id の部分一致では s1_1 が s1_10 を巻き込むため、解決済みマーカーの
-    行全体と完全一致させる。
-    """
-    if not dropped:
-        return
-    tokens = {f"[[capture:{capture.marker_id}]]" for capture in dropped}
-    kept = [line for line in section.body.splitlines() if line.strip() not in tokens]
-    section.body = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
 def generate_report(

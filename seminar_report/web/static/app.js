@@ -93,7 +93,7 @@ async function init() {
   for (const preset of config.presets) {
     const option = document.createElement("option");
     option.value = preset.value;
-    option.textContent = `${preset.label}（約${preset.target_chars}字 / 画像${preset.max_captures}枚）`;
+    option.textContent = `${preset.label}（約${preset.target_chars}字 / 画像 目安${preset.max_captures}枚）`;
     detail.appendChild(option);
   }
   detail.value = "standard";

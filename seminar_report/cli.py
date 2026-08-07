@@ -38,7 +38,9 @@ def run(
     video: Path = typer.Argument(..., exists=True, dir_okay=False, help="入力の .mp4"),
     detail: DetailLevel = typer.Option(DetailLevel.STANDARD, "--detail", "-d", help="詳細度"),
     chars: int | None = typer.Option(None, "--chars", "-c", help="目標文字数(指定時は --detail より優先)"),
-    max_captures: int | None = typer.Option(None, "--max-captures", help="画像の最大枚数"),
+    max_captures: int | None = typer.Option(
+        None, "--max-captures", help="画像枚数の目安(章あたりの上限。重要な瞬間が多ければ超えてよい)"
+    ),
     provider: str | None = typer.Option(None, "--provider", "-p", help="claude | openai | ollama"),
     model: str | None = typer.Option(None, "--model", "-m", help="使用するモデル名(未指定なら .env の既定値)"),
     out: Path | None = typer.Option(None, "--out", "-o", help="出力先ディレクトリ"),
