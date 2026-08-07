@@ -26,6 +26,30 @@ function clearJob() {
   }
 }
 
+// 切り出し範囲は動画ごとに変わるものではなく、同じ登壇環境で撮った動画に
+// 繰り返し使うことが多いため、次回のフォーム表示にも引き継ぐ。
+const CROP_KEY = "seminar-report:crop";
+
+function rememberCrop(value) {
+  try {
+    if (value) {
+      localStorage.setItem(CROP_KEY, value);
+    } else {
+      localStorage.removeItem(CROP_KEY);
+    }
+  } catch {
+    /* 同上 */
+  }
+}
+
+function restoreCrop() {
+  try {
+    return localStorage.getItem(CROP_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
 // ---- 画面遷移 ----
 function showView(name) {
   for (const view of document.querySelectorAll(".view")) {
@@ -68,6 +92,9 @@ async function init() {
     $("publish").disabled = true;
     $("publish").title = ".env に Confluence の接続情報が未設定です";
   }
+
+  $("crop").value = restoreCrop();
+  $("crop").addEventListener("input", () => rememberCrop($("crop").value));
 
   await resumePreviousJob();
 }
@@ -279,6 +306,8 @@ function onFileChosen() {
     cropInput.value = `${fmt(left)},${fmt(top)},${fmt(right)},${fmt(bottom)}`;
     readout.textContent =
       `left=${fmt(left)} top=${fmt(top)} right=${fmt(right)} bottom=${fmt(bottom)}`;
+    // .value への直接代入は input イベントを発火しないため、保存処理へ明示的に伝える
+    cropInput.dispatchEvent(new Event("input"));
   }
 })();
 
