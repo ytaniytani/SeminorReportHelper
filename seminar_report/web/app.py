@@ -308,6 +308,21 @@ async def export_job(job_id: str) -> FileResponse:
     return FileResponse(zip_path, filename=f"{job.result.report.title}.zip")
 
 
+@app.get("/api/jobs/{job_id}/html")
+async def job_html(job_id: str) -> FileResponse:
+    """完了直後にブラウザで直接開くための report.html。
+
+    ZIP をダウンロード→展開→開く、という手間を省くための経路。
+    """
+    job = _require_job(job_id)
+    if job.result is None:
+        raise HTTPException(409, "まだ完了していません")
+    path = job.output_dir / "report.html"
+    if not path.exists():
+        raise HTTPException(404, "report.html が見つかりません")
+    return FileResponse(path, media_type="text/html")
+
+
 class PublishRequest(BaseModel):
     space_key: str | None = None
     title: str | None = None

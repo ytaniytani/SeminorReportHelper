@@ -5,6 +5,7 @@ const $ = (id) => document.getElementById(id);
 let config = null;
 let jobId = null;
 let report = null;
+let autoOpenWindow = null;
 
 // ジョブ ID を変数だけで持つと、リロードした瞬間に走行中のジョブへ戻れなくなる。
 const JOB_KEY = "seminar-report:job";
@@ -47,6 +48,27 @@ function restoreCrop() {
     return localStorage.getItem(CROP_KEY) || "";
   } catch {
     return "";
+  }
+}
+
+// 完了時に新しいタブでレポートを開くかどうかの設定。ZIP を落として展開して
+// 開く手間を省くための機能なので、既定は有効。
+const AUTO_OPEN_KEY = "seminar-report:auto-open-html";
+
+function rememberAutoOpen(enabled) {
+  try {
+    localStorage.setItem(AUTO_OPEN_KEY, enabled ? "1" : "0");
+  } catch {
+    /* 同上 */
+  }
+}
+
+function restoreAutoOpen() {
+  try {
+    const saved = localStorage.getItem(AUTO_OPEN_KEY);
+    return saved === null ? true : saved === "1";
+  } catch {
+    return true;
   }
 }
 
@@ -95,6 +117,11 @@ async function init() {
 
   $("crop").value = restoreCrop();
   $("crop").addEventListener("input", () => rememberCrop($("crop").value));
+
+  $("auto-open-html").checked = restoreAutoOpen();
+  $("auto-open-html").addEventListener("change", () =>
+    rememberAutoOpen($("auto-open-html").checked)
+  );
 
   await resumePreviousJob();
 }
@@ -317,6 +344,12 @@ $("upload-form").addEventListener("submit", async (event) => {
   const file = videoInput.files[0];
   if (!file) return;
 
+  // ジョブ完了は非同期(SSE/ポーリング)で分かるため、そのタイミングで
+  // window.open() してもポップアップブロックされる。クリックというユーザー
+  // 操作の直後・同期的なうちに空タブを開いておき、完了時に navigate する。
+  autoOpenWindow =
+    $("auto-open-html").checked ? window.open("about:blank", "_blank") : null;
+
   const form = new FormData();
   form.append("video", file);
   form.append("detail", $("detail").value);
@@ -437,6 +470,13 @@ function showFailure(error, trace) {
     log.appendChild(box);
   }
 
+  // 開いておいた空タブは使い道が無くなったので閉じる(自動生成した about:blank
+  // タブが残り続けると混乱するため)。
+  if (autoOpenWindow && !autoOpenWindow.closed) {
+    autoOpenWindow.close();
+  }
+  autoOpenWindow = null;
+
   clearJob();
 }
 
@@ -503,6 +543,17 @@ async function loadReport() {
   report = data.report;
   renderReport();
   showView("result");
+  openReportHtml();
+}
+
+/** 送信時に開いておいた空タブに report.html を読み込ませる。 */
+function openReportHtml() {
+  if (!autoOpenWindow || autoOpenWindow.closed) {
+    autoOpenWindow = null;
+    return;
+  }
+  autoOpenWindow.location.href = `/api/jobs/${jobId}/html`;
+  autoOpenWindow = null;
 }
 
 function formatDuration(seconds) {

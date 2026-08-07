@@ -78,6 +78,14 @@ def test_full_job_flow(client: TestClient, sample_video: Path) -> None:
     assert export.status_code == 200
     assert export.content[:2] == b"PK"
 
+    # 完了時に新しいタブで直接開くための report.html も配信できる
+    html = client.get(f"/api/jobs/{job_id}/html")
+    assert html.status_code == 200
+    assert html.headers["content-type"].startswith("text/html")
+    assert "data:image/jpeg;base64," in html.text
+
+
+
 
 def test_patch_applies_edits(client: TestClient, sample_video: Path) -> None:
     job_id = _submit(client, sample_video)
@@ -143,6 +151,7 @@ def test_swap_rejects_out_of_range_index(client: TestClient, sample_video: Path)
 def test_missing_job_returns_404(client: TestClient) -> None:
     assert client.get("/api/jobs/unknown").status_code == 404
     assert client.get("/api/jobs/unknown/export").status_code == 404
+    assert client.get("/api/jobs/unknown/html").status_code == 404
 
 
 def test_job_list_allows_recovery_after_disconnect(
