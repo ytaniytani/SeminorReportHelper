@@ -36,7 +36,7 @@ def render_markdown(report: Report, image_prefix: str = "images/") -> str:
     lines: list[str] = [f"# {report.title}", ""]
 
     if report.overview:
-        lines += ["## 概要", "", report.overview.strip(), ""]
+        lines += ["# 概要", "", report.overview.strip(), ""]
 
     if report.key_points:
         lines += ["## 要点", ""]
@@ -45,7 +45,7 @@ def render_markdown(report: Report, image_prefix: str = "images/") -> str:
 
     for section in report.sections:
         body = _substitute(section.body, captures, image_prefix).strip()
-        lines += [f"## {section.title}", "", body, ""]
+        lines += [f"# {section.title}", "", body, ""]
 
     if report.source_video:
         lines += ["---", "", f"*元動画: {report.source_video}*", ""]
@@ -57,9 +57,9 @@ def render_plain_markdown(report: Report) -> str:
     """画像を含まないテキストのみの Markdown。"""
     lines: list[str] = [f"# {report.title}", ""]
     if report.overview:
-        lines += ["## 概要", "", report.overview.strip(), ""]
+        lines += ["# 概要", "", report.overview.strip(), ""]
     if report.key_points:
         lines += ["## 要点", ""] + [f"- {p}" for p in report.key_points] + [""]
     for section in report.sections:
-        lines += [f"## {section.title}", "", strip_markers(section.body), ""]
+        lines += [f"# {section.title}", "", strip_markers(section.body), ""]
     return "\n".join(lines).rstrip() + "\n"

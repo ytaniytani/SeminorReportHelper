@@ -23,9 +23,10 @@ _STYLE = """
 body { font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", \
 sans-serif; line-height: 1.8; max-width: 860px; margin: 40px auto; padding: 0 20px; \
 color: #1f2328; }
-h1 { font-size: 1.8em; }
-h2 { font-size: 1.4em; border-bottom: 1px solid #d9dde3; padding-bottom: 4px; \
+h1 { font-size: 1.6em; border-bottom: 1px solid #d9dde3; padding-bottom: 4px; \
 margin-top: 2em; }
+h1.doc-title { font-size: 1.9em; border-bottom: none; margin-top: 0; padding-bottom: 0; }
+h2 { font-size: 1.2em; margin-top: 1.6em; }
 figure { text-align: center; margin: 1.5em 0; }
 figure img { max-width: 100%; border: 1px solid #d9dde3; border-radius: 6px; }
 figcaption { color: #6b7280; font-size: .9em; margin-top: 6px; }
@@ -65,11 +66,11 @@ def render_html(report: Report) -> str:
         '<html lang="ja"><head><meta charset="utf-8" />',
         f"<title>{escape(report.title)}</title>",
         f"<style>{_STYLE}</style></head><body>",
-        f"<h1>{escape(report.title)}</h1>",
+        f'<h1 class="doc-title">{escape(report.title)}</h1>',
     ]
 
     if report.overview:
-        parts.append("<h2>概要</h2>")
+        parts.append("<h1>概要</h1>")
         parts.append(blocks_to_xhtml(report.overview, captures, _image_html))
 
     if report.key_points:
@@ -78,7 +79,7 @@ def render_html(report: Report) -> str:
         parts.append(f"<ul>{items}</ul>")
 
     for section in report.sections:
-        parts.append(f"<h2>{inline(section.title)}</h2>")
+        parts.append(f"<h1>{inline(section.title)}</h1>")
         parts.append(blocks_to_xhtml(section.body, captures, _image_html))
 
     if report.source_video:

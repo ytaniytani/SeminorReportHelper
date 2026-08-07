@@ -97,7 +97,30 @@ def test_markdown_contains_image_and_caption(report: Report) -> None:
     markdown = render_markdown(report)
     assert "![全体構成図 & 凡例](images/s0_0.jpg)" in markdown
     assert "00:00:27" in markdown
-    assert "## アーキテクチャ<解説>" in markdown
+    assert "# アーキテクチャ<解説>" in markdown
+
+
+def test_markdown_heading_levels_match_spec(report: Report) -> None:
+    """要点だけ見出し2、概要と各章の見出しは見出し1にすること。"""
+    markdown = render_markdown(report)
+    assert "\n# 概要\n" in markdown
+    assert "\n## 要点\n" in markdown
+    assert "\n# アーキテクチャ<解説>\n" in markdown
+
+
+def test_storage_heading_levels_match_spec(report: Report) -> None:
+    xhtml = render_storage(report)
+    assert "<h1>概要</h1>" in xhtml
+    assert "<h2>要点</h2>" in xhtml
+    assert "<h1>アーキテクチャ&lt;解説&gt;</h1>" in xhtml
+
+
+def test_html_heading_levels_match_spec(report: Report) -> None:
+    html = render_html(report)
+    assert '<h1 class="doc-title">社内AI活用セミナー</h1>' in html
+    assert "<h1>概要</h1>" in html
+    assert "<h2>要点</h2>" in html
+    assert "<h1>アーキテクチャ&lt;解説&gt;</h1>" in html
 
 
 # ---- HTML エクスポート ----

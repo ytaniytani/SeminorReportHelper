@@ -44,7 +44,7 @@ def render_storage(report: Report, include_toc: bool = True) -> str:
         )
 
     if report.overview:
-        parts.append("<h2>概要</h2>")
+        parts.append("<h1>概要</h1>")
         parts.append(_blocks_to_xhtml(report.overview, captures))
 
     if report.key_points:
@@ -53,7 +53,7 @@ def render_storage(report: Report, include_toc: bool = True) -> str:
         parts.append(f"<ul>{items}</ul>")
 
     for section in report.sections:
-        parts.append(f"<h2>{inline(section.title)}</h2>")
+        parts.append(f"<h1>{inline(section.title)}</h1>")
         parts.append(_blocks_to_xhtml(section.body, captures))
 
     if report.source_video:
