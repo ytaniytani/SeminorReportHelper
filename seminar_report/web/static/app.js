@@ -361,6 +361,7 @@ $("upload-form").addEventListener("submit", async (event) => {
   form.append("verify_captures", $("verify-captures").checked ? "true" : "false");
   form.append("include_images", $("include-images").checked ? "true" : "false");
   form.append("crop", $("crop").value);
+  form.append("user_request", $("user-request").value);
 
   showView("progress");
   $("log").innerHTML = "";

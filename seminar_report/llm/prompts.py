@@ -68,27 +68,47 @@ def chunk_summary_prompt(timestamped_text: str, index: int, total: int) -> str:
 """
 
 
+def user_request_block(user_request: str) -> str:
+    """依頼者からの要望をプロンプトに差し込むための共通ブロック。
+
+    outline / write の両段に渡すことで、章立ての重み付けと本文の書き方の
+    両方に反映されるようにする。
+    """
+    if not user_request.strip():
+        return ""
+    return f"""
+## 依頼者からの要望(最優先で考慮すること)
+{user_request.strip()}
+"""
+
+
 def outline_prompt(
     summaries_text: str,
     duration_label: str,
     target_chars: int,
     section_range: tuple[int, int],
     language: str,
+    user_request: str = "",
 ) -> str:
     """outline 段: 内容に応じた章立てを AI 自身に決めさせる。"""
     low, high = section_range
+    request_block = user_request_block(user_request)
     return f"""以下は、長さ {duration_label} のセミナー動画を区間ごとに要約したものです。
 
 これ全体を踏まえて、{language}のレポートの構成を設計してください。
 決まった雛形に当てはめるのではなく、**この動画の内容にとって最も自然で\
 読み手に伝わる章立て**を考えてください。
-
+{request_block}
 条件:
 - セクション数は {low}〜{high} 個。
 - レポート本文全体の目標文字数は約 {target_chars} 字。この分量に収まる粒度で構成すること。
 - 各セクションには、そのセクションが対応する動画内の時刻範囲を指定すること。
   時刻範囲は入力の要約に現れる時刻に基づくこと。
 - セクションは時系列順に並べること。
+- 依頼者からの要望がある場合は最優先で構成に反映すること。
+  「○○を重視して」なら該当セクションの配分(文字数の重み)を厚くし、
+  「○○のみ」なら章立てそのものをそのテーマに絞り込み、
+  「○○には触れない」ならそのテーマのセクションを作らないこと。
 
 出力は次の JSON のみ(説明文やコードフェンスは不要):
 {{
@@ -119,10 +139,12 @@ def section_write_prompt(
     max_captures: int,
     language: str,
     context_note: str = "",
+    user_request: str = "",
 ) -> str:
     """write 段: セクション本文を書く。ここでキャプチャ位置も決まる。"""
     capture_rules = CAPTURE_RULES.format(max_captures=max_captures)
     context_block = f"\n## 前のセクションまでの流れ\n{context_note}\n" if context_note else ""
+    request_block = user_request_block(user_request)
 
     return f"""セミナーレポートの 1 セクションを{language}で執筆してください。
 
@@ -130,13 +152,17 @@ def section_write_prompt(
 見出し: {section_title}
 書くべき内容: {focus}
 目標文字数: 約 {target_chars} 字
-{context_block}
+{context_block}{request_block}
 ## 執筆方針
 - 見出し行(`## ...`)は出力に含めないこと。本文だけを書くこと。
 - 発言の書き起こしではなく、要点を再構成した読みやすい文章にすること。
 - 重要な数値・固有名詞・結論は落とさないこと。
 - 箇条書きが有効な箇所では箇条書きを使ってよい(Markdown)。
 - 登壇者の主張と、事実・データを区別して書くこと。
+- 依頼者からの要望がある場合は最優先で従うこと。「○○を重視して」なら\
+そのテーマの記述を特に詳しく具体的に書き、画像キャプチャの選定でも優先すること。
+  「○○のみ」ならそのテーマに関係しない内容は書かないこと。
+  「○○には触れない」ならそのテーマに関する記述・画像キャプチャを含めないこと。
 {capture_rules}
 --- 該当区間の文字起こし ---
 {timestamped_text}

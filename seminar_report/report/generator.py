@@ -164,6 +164,7 @@ def build_outline(
     provider: LLMProvider,
     spec: DetailSpec,
     language: str,
+    user_request: str = "",
 ) -> dict:
     """outline 段。章立ては固定テンプレートではなく AI に設計させる。"""
     duration_label = format_timestamp(transcript.duration)
@@ -173,6 +174,7 @@ def build_outline(
         target_chars=spec.target_chars,
         section_range=spec.section_range,
         language=language,
+        user_request=user_request,
     )
     data = provider.complete_json(prompt, system=prompts.SYSTEM, max_tokens=3000)
 
@@ -227,6 +229,7 @@ def write_sections(
     spec: DetailSpec,
     language: str,
     on_progress: ProgressFn | None = None,
+    user_request: str = "",
 ) -> tuple[list[Section], list[Capture]]:
     """write 段。本文を書き、同時にキャプチャ位置が決まる。"""
     raw_sections = outline["sections"]
@@ -259,6 +262,7 @@ def write_sections(
                 max_captures=per_section_captures,
                 language=language,
                 context_note=" → ".join(titles[max(index - 3, 0) : index]),
+                user_request=user_request,
             ),
             system=prompts.SYSTEM,
             max_tokens=max(1500, section_chars * 3),
@@ -345,18 +349,19 @@ def generate_report(
     spec: DetailSpec,
     language: str = "日本語",
     on_progress: ProgressFn | None = None,
+    user_request: str = "",
 ) -> Report:
     """文字起こしからレポート本体を組み立てる(画像の抽出は別工程)。"""
     summaries = summarize_chunks(transcript, provider, on_progress)
 
     if on_progress:
         on_progress(JobStep.OUTLINE, 0.0, "章立てを設計中")
-    outline = build_outline(summaries, transcript, provider, spec, language)
+    outline = build_outline(summaries, transcript, provider, spec, language, user_request)
     if on_progress:
         on_progress(JobStep.OUTLINE, 1.0, f"{len(outline['sections'])} セクション")
 
     sections, captures = write_sections(
-        outline, transcript, provider, spec, language, on_progress
+        outline, transcript, provider, spec, language, on_progress, user_request
     )
 
     key_points_text = "\n".join(f"- {k}" for k in outline["key_points"])

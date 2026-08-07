@@ -111,3 +111,36 @@ def test_all_pipeline_stages_are_invoked(transcript: Transcript) -> None:
     provider = ScriptedProvider()
     generate_report(transcript, provider, resolve_detail(DetailLevel.STANDARD), "日本語")
     assert {"summary", "outline", "section", "overview"} <= set(provider.calls)
+
+
+def test_user_request_is_forwarded_to_outline_and_section_prompts(
+    transcript: Transcript,
+) -> None:
+    """依頼者からの要望が、章立て・本文執筆の両プロンプトに渡っていること。"""
+    provider = MockProvider(
+        responses=[
+            # summarize_chunks (map段、1区間)
+            '{"summary": "要約", "topics": []}',
+            # build_outline
+            (
+                '{"title": "T", "key_points": ["p"], "sections": '
+                '[{"title": "S", "start": "00:00:00", "end": "00:00:40", "focus": "f"}]}'
+            ),
+            # write_sections (1セクション)
+            "本文です。",
+            # overview
+            "概要です。",
+        ]
+    )
+    report = generate_report(
+        transcript,
+        provider,
+        resolve_detail(DetailLevel.STANDARD),
+        "日本語",
+        user_request="特に価格の話を重視して",
+    )
+
+    assert report.title == "T"
+    prompts_with_request = [p for p in provider.prompts if "特に価格の話を重視して" in p]
+    # outline_prompt と section_write_prompt の両方に渡っている
+    assert len(prompts_with_request) == 2

@@ -52,6 +52,11 @@ def run(
         help="キャプチャの切り出し矩形 left,top,right,bottom(0〜1の割合)。"
         "登壇者映像やロゴを除いてスライド部分だけを残したい場合に指定する",
     ),
+    request: str | None = typer.Option(
+        None,
+        "--request",
+        help="レポート内容への要望(例: '特に価格の話を重視して' '導入事例には触れない')",
+    ),
     no_images: bool = typer.Option(False, "--no-images", help="画像を入れない"),
     no_cache: bool = typer.Option(False, "--no-cache", help="文字起こしキャッシュを使わない"),
     publish: bool = typer.Option(False, "--publish", help="Confluence に投稿する"),
@@ -85,6 +90,7 @@ def run(
         use_cache=not no_cache,
         include_images=not no_images,
         capture_crop=capture_crop,
+        user_request=request,
     )
 
     result = run_pipeline(video, output_dir, options, _progress_printer())

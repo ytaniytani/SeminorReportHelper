@@ -45,6 +45,9 @@ class PipelineOptions:
     capture_crop: CropBox | None = None
     """キャプチャ画像の切り出し矩形 (left, top, right, bottom)。0〜1 の割合。
     登壇者映像やロゴを含む画面からスライド部分だけを切り出したい場合に使う。"""
+    user_request: str | None = None
+    """依頼者からの要望(例: 「特に○○の箇所を重視した内容にして」)。
+    章立ての設計・本文の重み付け・画像キャプチャの選定に反映される。"""
 
 
 @dataclass
@@ -96,7 +99,9 @@ def run_pipeline(
     provider_kwargs = {"model": options.model} if options.model else {}
     provider = get_provider(options.provider, **provider_kwargs)
     spec = resolve_detail(options.detail, options.target_chars, options.max_captures)
-    report = generate_report(transcript, provider, spec, language, on_progress)
+    report = generate_report(
+        transcript, provider, spec, language, on_progress, options.user_request or ""
+    )
     report.source_video = video.name
     report.duration = transcript.duration or duration
 

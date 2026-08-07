@@ -76,6 +76,7 @@ async def create_job(
     verify_captures: str = Form("false"),
     include_images: str = Form("true"),
     crop: str = Form(""),
+    user_request: str = Form(""),
 ) -> dict:
     settings = get_settings()
     if not video.filename:
@@ -115,6 +116,7 @@ async def create_job(
         verify_captures=verify_captures == "true",
         include_images=include_images == "true",
         capture_crop=capture_crop,
+        user_request=user_request.strip() or None,
     )
 
     job = manager.create(video_path, job_root / "output", options)
