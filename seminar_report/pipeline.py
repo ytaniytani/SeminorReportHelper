@@ -18,6 +18,7 @@ from seminar_report.media.audio import probe_duration
 from seminar_report.media.frames import CropBox
 from seminar_report.models import DetailLevel, JobStep, Report, Transcript
 from seminar_report.render.confluence_storage import render_storage
+from seminar_report.render.html import render_html
 from seminar_report.render.markdown import render_markdown
 from seminar_report.report.detail import resolve_detail
 from seminar_report.report.generator import generate_report
@@ -53,6 +54,7 @@ class PipelineResult:
     output_dir: Path
     markdown_path: Path
     storage_path: Path
+    html_path: Path
     report_json_path: Path
     transcript_path: Path
     files: list[Path] = field(default_factory=list)
@@ -121,20 +123,23 @@ def run_pipeline(
 
 
 def write_outputs(report: Report, transcript: Transcript, output_dir: Path) -> PipelineResult:
-    """Markdown / storage format / JSON を書き出す。"""
+    """Markdown / storage format / HTML / JSON を書き出す。"""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     markdown_path = output_dir / "report.md"
     storage_path = output_dir / "report.confluence.xml"
+    html_path = output_dir / "report.html"
     report_json_path = output_dir / "report.json"
     transcript_path = output_dir / "transcript.json"
 
     markdown_path.write_text(render_markdown(report), encoding="utf-8")
     storage_path.write_text(render_storage(report), encoding="utf-8")
+    # 画像を base64 埋め込みにするため、キャプチャがファイルに書き出された後に呼ぶこと。
+    html_path.write_text(render_html(report), encoding="utf-8")
     report_json_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
     transcript_path.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
 
-    files = [markdown_path, storage_path, report_json_path, transcript_path]
+    files = [markdown_path, storage_path, html_path, report_json_path, transcript_path]
     files += [
         c.image_path for c in report.captures if c.included and c.image_path and c.image_path.exists()
     ]
@@ -145,6 +150,7 @@ def write_outputs(report: Report, transcript: Transcript, output_dir: Path) -> P
         output_dir=output_dir,
         markdown_path=markdown_path,
         storage_path=storage_path,
+        html_path=html_path,
         report_json_path=report_json_path,
         transcript_path=transcript_path,
         files=files,
@@ -155,7 +161,7 @@ def export_zip(output_dir: Path, report: Report, dest: Path | None = None) -> Pa
     """Confluence に手で貼るための一式を ZIP にまとめる。"""
     dest = dest or output_dir / "report_bundle.zip"
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name in ("report.md", "report.confluence.xml", "report.json"):
+        for name in ("report.md", "report.confluence.xml", "report.html", "report.json"):
             path = output_dir / name
             if path.exists():
                 archive.write(path, arcname=name)

@@ -1,8 +1,11 @@
 """LLM 呼び出しの並列化。
 
-並列にしても「出力順が入力順と一致する」「キャプチャ予算を超えない」という
-2 つの不変条件が崩れないことを確認する。ここが崩れると、章の順序が入れ替わったり
-プリセットより多い画像が入ったりする。
+並列にしても「出力順が入力順と一致する」という不変条件が崩れないことを
+確認する。ここが崩れると、章の順序が入れ替わってしまう。
+
+キャプチャ予算については、見出しごとに最低1枚は入れる保証があるため、
+見出し数が予算を上回る場合は結果がプリセット値を超えうる
+(`max(予算, 見出し数)` が実質的な上限)。
 """
 
 from __future__ import annotations
@@ -91,12 +94,17 @@ def test_section_order_matches_outline(transcript: Transcript) -> None:
 
 
 @pytest.mark.parametrize("budget", [0, 1, 2, 3])
-def test_capture_budget_is_never_exceeded(transcript: Transcript, budget: int) -> None:
-    """予算を各セクションに先に配る方式でも、合計が上限を超えないこと。"""
+def test_capture_budget_upper_bound_respects_the_guarantee(transcript: Transcript, budget: int) -> None:
+    """予算を切り詰めても、見出しごとの最低1枚保証分より少なくはならない。
+
+    ScriptedProvider は常に2セクション、各1個の有効なマーカーを返すため、
+    実質的な上限は max(budget, セクション数) になる(budget=0 は保証自体が
+    働かないため例外)。
+    """
     spec = resolve_detail(DetailLevel.STANDARD, max_captures=budget)
     report = generate_report(transcript, ScriptedProvider(), spec, "日本語")
 
-    assert len(report.captures) <= budget
+    assert len(report.captures) <= max(budget, len(report.sections))
 
 
 def test_dropped_markers_are_removed_from_body(transcript: Transcript) -> None:
@@ -151,11 +159,18 @@ class MultiCaptureProvider(LLMProvider):
         )
 
 
-def test_budget_trims_across_sections(transcript: Transcript) -> None:
-    """4 セクション × 各 2 枚を要求しても、全体上限で切り詰められること。"""
+def test_budget_trims_but_keeps_one_per_section(transcript: Transcript) -> None:
+    """4 セクション × 各 2 枚を要求すると、2 枚目以降は上限(3)で切り詰められる。
+
+    ただし見出しごとの最低1枚保証が優先されるため、4 セクションぶんの
+    1 枚ずつは残り、合計は指定した上限(3)を超えて 4 になる。
+    """
     spec = resolve_detail(DetailLevel.STANDARD, max_captures=3)
     report = generate_report(transcript, MultiCaptureProvider(), spec, "日本語")
 
-    assert len(report.captures) == 3
+    assert len(report.captures) == 4
     # marker_id が重複していない(切り詰めで取り違えていない)
-    assert len({c.marker_id for c in report.captures}) == 3
+    assert len({c.marker_id for c in report.captures}) == 4
+    # 各セクションに最低1枚は残っている
+    for section in report.sections:
+        assert "[[capture:" in section.body

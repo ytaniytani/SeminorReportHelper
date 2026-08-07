@@ -110,7 +110,11 @@ def test_export_zip_bundles_everything(
 
     assert "report.md" in names
     assert "report.confluence.xml" in names
+    assert "report.html" in names
     assert any(name.startswith("images/") for name in names)
+
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "data:image/jpeg;base64," in html
 
 
 def test_no_images_option_skips_capture(

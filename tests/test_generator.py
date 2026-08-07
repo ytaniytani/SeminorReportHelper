@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from conftest import ScriptedProvider
+from conftest import MockProvider, ScriptedProvider
 
 from seminar_report.llm.base import extract_json
 from seminar_report.models import DetailLevel, Transcript
 from seminar_report.report.detail import resolve_detail
-from seminar_report.report.generator import generate_report, plan_chunks
+from seminar_report.report.generator import generate_report, plan_chunks, write_sections
 
 
 def test_extract_json_handles_code_fences() -> None:
@@ -49,25 +49,62 @@ def test_generate_report_builds_sections_and_captures(transcript: Transcript) ->
         assert "[[capture:s" in section.body
 
 
-def test_hallucinated_timestamp_produces_no_capture(transcript: Transcript) -> None:
-    """動画に存在しない時刻を LLM が返しても、画像は挿入されない。"""
+def test_hallucinated_timestamp_is_never_used(transcript: Transcript) -> None:
+    """動画に存在しない時刻を LLM が返しても、その時刻は採用されない。
+
+    見出しごとに最低1枚保証する挙動があるため、セクション自体には
+    (作話の時刻ではなく)実在する時刻へのフォールバック画像が入りうる。
+    """
     provider = ScriptedProvider(capture_time="02:00:00")
     report = generate_report(transcript, provider, resolve_detail(DetailLevel.BRIEF), "日本語")
 
-    assert report.captures == []
-    assert all("capture" not in s.body for s in report.sections)
+    assert all(c.requested_time != 7200.0 for c in report.captures)
+    assert all(c.resolved_time <= transcript.duration for c in report.captures)
 
 
-def test_capture_budget_is_respected(transcript: Transcript) -> None:
-    spec = resolve_detail(DetailLevel.STANDARD, max_captures=1)
+def test_capture_budget_is_respected_when_it_covers_every_section(transcript: Transcript) -> None:
+    """予算が見出し数以上あれば、素直にその範囲に収まること。"""
+    spec = resolve_detail(DetailLevel.STANDARD, max_captures=5)
     report = generate_report(transcript, ScriptedProvider(), spec, "日本語")
-    assert len(report.captures) <= 1
+    assert len(report.captures) <= 5
+
+
+def test_every_section_gets_at_least_one_capture(transcript: Transcript) -> None:
+    """見出しごとに最低1枚は入る(要望どおりの保証)。"""
+    report = generate_report(
+        transcript, ScriptedProvider(), resolve_detail(DetailLevel.STANDARD), "日本語"
+    )
+    for section in report.sections:
+        assert "[[capture:" in section.body
 
 
 def test_no_images_mode_yields_no_captures(transcript: Transcript) -> None:
     spec = resolve_detail(DetailLevel.STANDARD, max_captures=0)
     report = generate_report(transcript, ScriptedProvider(), spec, "日本語")
     assert report.captures == []
+
+
+def test_fallback_capture_when_llm_places_no_marker_at_all(transcript: Transcript) -> None:
+    """本文に一つもマーカーが無い場合でも、機械的にフォールバックが入る。
+
+    プロンプトで「必ず1個以上」と指示しても LLM が守らないことがあるため、
+    write_sections 側にも保険を持たせている。
+    """
+    provider = MockProvider(default="本文のみでマーカーは一切ありません。")
+    outline = {
+        "sections": [
+            {"title": "セクションA", "start": "00:00:00", "end": "00:00:40", "focus": "説明"},
+        ]
+    }
+    spec = resolve_detail(DetailLevel.STANDARD)
+
+    sections, captures = write_sections(outline, transcript, provider, spec, "日本語")
+
+    assert len(captures) == 1
+    assert captures[0].marker_id == "s0_0"
+    assert captures[0].caption == "セクションA"
+    assert captures[0].resolved_time <= transcript.duration
+    assert "[[capture:s0_0]]" in sections[0].body
 
 
 def test_all_pipeline_stages_are_invoked(transcript: Transcript) -> None:

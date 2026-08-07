@@ -25,7 +25,7 @@ from seminar_report.models import (
     parse_timestamp,
 )
 from seminar_report.report.detail import DetailSpec
-from seminar_report.report.markers import resolve_markers
+from seminar_report.report.markers import resolve_markers, snap_to_segment
 
 ProgressFn = Callable[[JobStep, float, str], None]
 
@@ -268,6 +268,25 @@ def write_sections(
         body, section_captures = resolve_markers(
             body, transcript, id_prefix=f"s{index}", max_captures=per_section_captures
         )
+
+        # プロンプトで指示していても、LLM が結局 1 個もマーカーを置かないことが
+        # ある。見出しごとに最低 1 枚は入れたいので、その場合はセクション中央
+        # 付近の時刻を機械的に採用する(キャプションは見出しを流用)。
+        if not section_captures and per_section_captures >= 1:
+            midpoint = (start + end) / 2 if end > start else start
+            resolved = snap_to_segment(midpoint, transcript)
+            if resolved is not None:
+                marker_id = f"s{index}_0"
+                body = (body.rstrip() + f"\n\n[[capture:{marker_id}]]").strip()
+                section_captures = [
+                    Capture(
+                        marker_id=marker_id,
+                        requested_time=midpoint,
+                        resolved_time=resolved,
+                        caption=title,
+                    )
+                ]
+
         return Section(title=title, body=body, start=start, end=end), section_captures
 
     def report(done: int) -> None:
@@ -276,20 +295,32 @@ def write_sections(
 
     written = _map_ordered(write_one, list(raw_sections), report)
 
-    # 並列化により予算を逐次減算できないので、各セクションには上限を一律に配り、
-    # 全体の合計がプリセットの枚数を超えた分をここで文書順に切り詰める。
+    # 並列化により予算を逐次減算できないので、全体の合計が予算を超えた分は
+    # ここで切り詰める。ただし各セクションの 1 枚目は「見出しごとに最低1枚」
+    # の保証なので予算に関わらず必ず残し、超過分は 2 枚目以降からのみ削る。
+    # 見出し数がプリセットの max_captures を上回る場合、実際の採用枚数が
+    # プリセット値を超えることがある(保証を優先するため)。
     sections: list[Section] = []
-    captures: list[Capture] = []
+    per_section_captures_list: list[list[Capture]] = []
     for section, section_captures in written:
         sections.append(section)
-        room = spec.max_captures - len(captures)
-        if room <= 0:
-            _drop_captures(section, section_captures)
-            continue
-        if len(section_captures) > room:
-            _drop_captures(section, section_captures[room:])
-            section_captures = section_captures[:room]
-        captures.extend(section_captures)
+        per_section_captures_list.append(section_captures)
+
+    keep_counts = [min(1, len(caps)) for caps in per_section_captures_list]
+    remaining = spec.max_captures - sum(keep_counts)
+    if remaining > 0:
+        for index, caps in enumerate(per_section_captures_list):
+            extra = min(remaining, len(caps) - keep_counts[index])
+            keep_counts[index] += extra
+            remaining -= extra
+            if remaining <= 0:
+                break
+
+    captures: list[Capture] = []
+    for section, caps, keep in zip(sections, per_section_captures_list, keep_counts):
+        kept, dropped = caps[:keep], caps[keep:]
+        _drop_captures(section, dropped)
+        captures.extend(kept)
 
     return sections, captures
 

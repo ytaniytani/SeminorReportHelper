@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from seminar_report.render.confluence_storage import (
     render_storage_without_images,
     wrap_for_validation,
 )
+from seminar_report.render.html import render_html
 from seminar_report.render.markdown import render_markdown
 
 
@@ -96,3 +98,54 @@ def test_markdown_contains_image_and_caption(report: Report) -> None:
     assert "![全体構成図 & 凡例](images/s0_0.jpg)" in markdown
     assert "00:00:27" in markdown
     assert "## アーキテクチャ<解説>" in markdown
+
+
+# ---- HTML エクスポート ----
+
+
+def test_html_is_self_contained_document(report: Report) -> None:
+    html = render_html(report)
+    assert html.startswith("<!doctype html>")
+    assert "<html" in html and "</html>" in html
+    assert f"<title>{report.title}</title>" in html
+
+
+def test_html_escapes_special_characters(report: Report) -> None:
+    html = render_html(report)
+    assert "&lt;解説&gt;" in html
+
+
+def test_html_converts_markdown_constructs(report: Report) -> None:
+    html = render_html(report)
+    assert "<strong>重要</strong>" in html
+    assert "<code>code</code>" in html
+    assert "<ul><li>" in html
+    assert "<h4>補足</h4>" in html
+
+
+def test_html_embeds_image_as_base64(report: Report, tmp_path: Path) -> None:
+    """画像ファイルが実在する場合、data URI として埋め込まれること。"""
+    image_bytes = b"\xff\xd8\xff\xe0fake-jpeg-bytes"
+    image_path = tmp_path / "s0_0.jpg"
+    image_path.write_bytes(image_bytes)
+    report.captures[0].image_path = image_path
+
+    html = render_html(report)
+
+    expected = base64.standard_b64encode(image_bytes).decode("ascii")
+    assert f"data:image/jpeg;base64,{expected}" in html
+    assert "全体構成図 &amp; 凡例" in html
+    assert "00:00:27" in html
+
+
+def test_html_falls_back_to_relative_path_when_image_missing(report: Report) -> None:
+    """画像ファイルが実在しない場合、data URI にできないので相対パスに逃がす。"""
+    html = render_html(report)
+    assert "src=\"images/s0_0.jpg\"" in html
+
+
+def test_html_excludes_excluded_capture(report: Report) -> None:
+    report.captures[0].included = False
+    html = render_html(report)
+    assert "data:image" not in html
+    assert "<img" not in html

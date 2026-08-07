@@ -185,14 +185,22 @@ uv run seminar-report doctor
 output/<動画名>/
 ├── report.md                # Markdown（画像は images/ を参照）
 ├── report.confluence.xml    # Confluence storage format
+├── report.html              # 単体で開ける HTML（画像を base64 で埋め込み済み）
 ├── report.json              # 再投稿・再編集用
 ├── transcript.json          # 文字起こし
 ├── images/                  # 採用されたキャプチャ
 └── report_bundle.zip        # 上記一式
 ```
 
-Confluence に手で貼る場合は、`report.confluence.xml` の中身をページの
-「ソース編集」に貼り、`images/` の画像を添付すればよい。
+Confluence への貼り方は環境によって使える機能が異なるため、3通り用意している。
+
+| 方法 | 手順 |
+|---|---|
+| 自動投稿（推奨） | `.env` に Confluence の接続情報を設定し `--publish` / Web UI の「投稿」ボタン |
+| ソース編集（「マークアップ」）がある場合 | `report.confluence.xml` の中身をページの「マークアップ」に貼り、`images/` の画像をまとめて添付 |
+| 上記が使えない場合 | `report.html` をブラウザで開き、全選択してコピーし、Confluence の編集画面にそのまま貼り付ける（表示された画像がそのまま添付・埋め込みされることが多い） |
+
+Confluence の「マークダウン」マクロは `report.md` の画像パスをうまく自動リンクしないことがあるため、その場合は `report.html` を使う方法を試すこと。
 
 ---
 
