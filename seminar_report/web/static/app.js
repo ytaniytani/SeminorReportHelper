@@ -172,16 +172,66 @@ $("upload-form").addEventListener("submit", async (event) => {
   showView("progress");
   $("log").innerHTML = "";
   $("progress-label").textContent = "アップロードしています…";
+  $("bar-fill").style.width = "0%";
 
-  const response = await fetch("/api/jobs", { method: "POST", body: form });
-  if (!response.ok) {
-    $("progress-label").textContent = "アップロードに失敗しました";
+  let jobIdFromUpload;
+  try {
+    jobIdFromUpload = await uploadJob(form);
+  } catch (error) {
+    showFailure(error.message);
     return;
   }
-  rememberJob((await response.json()).job_id);
+
+  rememberJob(jobIdFromUpload);
   lastStep = null;
   listen();
 });
+
+// fetch() は送信side の進捗を取れないため XHR を使う。数百MB〜GB の動画では
+// 進捗が出ないと「固まった」と誤解され、リロードや強制終了を招く。
+function uploadJob(form) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/jobs");
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const ratio = event.loaded / event.total;
+      $("bar-fill").style.width = `${Math.round(ratio * 100)}%`;
+      $("progress-detail").textContent =
+        `${formatMB(event.loaded)} / ${formatMB(event.total)} (${Math.round(ratio * 100)}%)`;
+    };
+
+    // 送信完了後もサーバー側のディスク書き込みが続く。ここで一度表示を変えないと
+    // 100% のまま止まって見える。
+    xhr.upload.onload = () => {
+      $("progress-label").textContent = "サーバーで受け取っています…";
+      $("progress-detail").textContent = "動画を保存しています。しばらくお待ちください";
+    };
+
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`アップロードに失敗しました (HTTP ${xhr.status})`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText).job_id);
+      } catch {
+        reject(new Error("サーバーの応答を解釈できませんでした"));
+      }
+    };
+
+    xhr.onerror = () =>
+      reject(new Error("サーバーに接続できません。起動したままか確認してください"));
+    xhr.onabort = () => reject(new Error("アップロードが中断されました"));
+
+    xhr.send(form);
+  });
+}
+
+function formatMB(bytes) {
+  return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+}
 
 // ---- 進捗 ----
 // 一次経路は SSE。切れた場合はポーリングに切り替える。長時間ジョブでは

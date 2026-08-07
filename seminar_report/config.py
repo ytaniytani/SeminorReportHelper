@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -51,6 +51,29 @@ class Settings(BaseSettings):
     cache_dir: Path = Field(default=PROJECT_ROOT / ".cache", alias="SRH_CACHE_DIR")
     output_dir: Path = Field(default=PROJECT_ROOT / "output", alias="SRH_OUTPUT_DIR")
     jobs_dir: Path = Field(default=PROJECT_ROOT / "jobs", alias="SRH_JOBS_DIR")
+
+    @field_validator(
+        "whisper_beam_size",
+        "whisper_cpu_threads",
+        "whisper_language",
+        "anthropic_api_key",
+        "openai_api_key",
+        "confluence_base_url",
+        "confluence_email",
+        "confluence_api_token",
+        "confluence_space_key",
+        mode="before",
+    )
+    @classmethod
+    def _empty_to_none(cls, value: object) -> object:
+        """`.env` の `KEY=`(値なし)を未指定として扱う。
+
+        .env.example は「空なら自動」と案内しているが、空文字のままだと
+        int 型のフィールドが parse エラーで落ちるため、ここで None に潰す。
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     def confluence_configured(self) -> bool:
         return all(

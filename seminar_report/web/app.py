@@ -86,7 +86,8 @@ async def create_job(
 
     def save() -> None:
         with video_path.open("wb") as fh:
-            shutil.copyfileobj(video.file, fh)
+            # 既定の 64KB バッファでは GB 級の動画で syscall が嵩む。
+            shutil.copyfileobj(video.file, fh, 1024 * 1024)
 
     # 30 分の動画は 1〜2GB になる。同期 I/O のままだとその間イベントループが
     # 止まり、進行中ジョブの SSE まで巻き添えで固まる。

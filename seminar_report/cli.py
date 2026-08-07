@@ -218,7 +218,23 @@ def serve(
     port: int = typer.Option(8000, "--port"),
 ) -> None:
     """ローカル Web UI を起動する。"""
+    import socket
+
     import uvicorn
+
+    # bind してから URL を案内する。先に表示すると、衝突して起動できなかった場合に
+    # 「別アプリが応答する URL」を開かせてしまい、原因が分からなくなる。
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError:
+        console.print(f"[red]ポート {port} は既に他のアプリが使用しています。[/]")
+        console.print(f"  別のポートを指定してください: [cyan]seminar-report serve --port {port + 1}[/]")
+        if port == 8000:
+            console.print("  ※ 8000 番は Epic Games Launcher などが使っていることがあります")
+        raise typer.Exit(1)
+    finally:
+        probe.close()
 
     console.print(f"[bold cyan]▶[/] http://{host}:{port} を開いてください")
     uvicorn.run("seminar_report.web.app:app", host=host, port=port, log_level="info")
