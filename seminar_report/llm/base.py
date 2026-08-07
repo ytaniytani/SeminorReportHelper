@@ -67,12 +67,25 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         temperature: float = 0.2,
     ) -> Any:
-        """JSON を期待して生成する。"""
-        return extract_json(
-            self.complete(
-                prompt, system=system, max_tokens=max_tokens, temperature=temperature
+        """JSON を期待して生成する。
+
+        モデルによっては指示を無視して思考過程や前置きを書き始め、JSON を
+        一度も出力しないまま終わることがある(特に推論指向のモデルで起きやすい)。
+        その場合は「JSON のみを出力せよ」と念押しして 1 回だけ再試行する。
+        """
+        text = self.complete(prompt, system=system, max_tokens=max_tokens, temperature=temperature)
+        try:
+            return extract_json(text)
+        except LLMError:
+            retry_prompt = (
+                f"{prompt}\n\n"
+                "厳守: 出力は JSON オブジェクトのみ。説明・前置き・思考過程・"
+                "コードフェンスは一切書かないこと。JSON の前後に文字を置かないこと。"
             )
-        )
+            text = self.complete(
+                retry_prompt, system=system, max_tokens=max_tokens, temperature=temperature
+            )
+            return extract_json(text)
 
     def describe_image(self, image: Path, prompt: str, max_tokens: int = 300) -> str:
         """画像を説明する。Vision 非対応なら空文字を返す。"""
