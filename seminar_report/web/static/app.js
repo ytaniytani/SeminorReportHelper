@@ -102,7 +102,7 @@ async function resumePreviousJob() {
     setStatus("前回のジョブを復帰しました");
   } else if (data.status === "failed") {
     showView("progress");
-    showFailure(data.error);
+    showFailure(data.error, data.traceback);
   } else {
     showView("progress");
     $("progress-label").textContent = "処理中のジョブに再接続しています…";
@@ -253,9 +253,30 @@ function showStep(data) {
   }
 }
 
-function showFailure(error) {
+function showFailure(error, trace) {
   $("progress-label").textContent = "失敗しました";
-  $("progress-detail").textContent = error || "";
+
+  // エラー文は複数行で対処手順を含むことがある。HTML では改行が潰れるため
+  // pre-wrap で保持する。
+  const detail = $("progress-detail");
+  detail.textContent = error || "";
+  detail.style.whiteSpace = "pre-wrap";
+
+  // スタックトレースは既定で畳んでおく。普段は邪魔だが、原因究明には要る。
+  const log = $("log");
+  log.innerHTML = "";
+  if (trace) {
+    const box = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "詳細（スタックトレース）";
+    const pre = document.createElement("pre");
+    pre.textContent = trace;
+    pre.style.whiteSpace = "pre-wrap";
+    pre.style.overflowX = "auto";
+    box.append(summary, pre);
+    log.appendChild(box);
+  }
+
   clearJob();
 }
 
@@ -268,7 +289,7 @@ function listen() {
     source.close();
     const data = JSON.parse(event.data);
     if (data.status === "failed") {
-      showFailure(data.error);
+      showFailure(data.error, data.traceback);
       return;
     }
     await loadReport();
@@ -298,7 +319,7 @@ function startPolling() {
 
     if (data.status === "failed") {
       stopPolling();
-      showFailure(data.error);
+      showFailure(data.error, data.traceback);
       return;
     }
     if (data.status === "done") {

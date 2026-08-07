@@ -27,6 +27,7 @@ class Job:
     events: list[Progress] = field(default_factory=list)
     result: PipelineResult | None = None
     error: str | None = None
+    traceback: str | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add_event(self, step: JobStep, ratio: float, detail: str) -> None:
@@ -80,6 +81,9 @@ class JobManager:
             job.status = JobStatus.DONE
         except Exception as exc:  # noqa: BLE001 - UI に理由を返すため握る
             job.error = f"{type(exc).__name__}: {exc}"
+            # 原因究明にはスタックが要る。ターミナルにしか出さないと
+            # 「ブラウザには一行だけ」で詰まるため、UI からも辿れるようにする。
+            job.traceback = traceback.format_exc()
             job.status = JobStatus.FAILED
             traceback.print_exc()
 

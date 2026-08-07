@@ -133,7 +133,11 @@ async def job_events(job_id: str) -> StreamingResponse:
                 idle = 0.0
 
             if job.finished:
-                payload = {"status": job.status.value, "error": job.error}
+                payload = {
+                    "status": job.status.value,
+                    "error": job.error,
+                    "traceback": job.traceback,
+                }
                 yield f"event: end\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 return
 
@@ -158,6 +162,7 @@ def _report_payload(job: Job) -> dict:
     return {
         "status": job.status.value,
         "error": job.error,
+        "traceback": job.traceback,
         "report": _serialize_report(report, job.id) if report else None,
     }
 

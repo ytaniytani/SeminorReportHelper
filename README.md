@@ -79,8 +79,15 @@ cp .env.example .env   # API キー等を記入
 搭載機では必ず有効にしてほしい。CUDA ライブラリを入れるだけでよい。
 
 ```bash
-pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
+uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
+
+`pip install`（`uv` を付けない）だと `.venv` の外に入り、ここからは見えないので注意。
+
+Windows では、pip で入れた DLL は `site-packages/nvidia/*/bin/` に置かれるだけで
+自動では読み込まれない（Python 3.8 以降、拡張モジュールの依存 DLL は PATH から
+探索されない）。本ツールは起動時に `os.add_dll_directory()` で登録するため
+追加の設定は不要。
 
 有効になっているかは診断コマンドで確認できる。
 
@@ -221,6 +228,7 @@ CONFLUENCE_SPACE_KEY=ENG
 | `ValidationError` が出て起動しない | 古い `.env` の空欄が原因（`SRH_WHISPER_BEAM_SIZE=` など）。該当行をコメントアウトするか削除する |
 | ブラウザに見慣れない JSON が出る | ポート 8000 を別アプリ（Epic Games Launcher など）が使用中。`--port 8001` で起動し直す |
 | アップロードが終わらない | 数百MB〜GB の動画は転送に数分かかる。進捗バーの数値が伸びていれば正常 |
+| `cublas64_12.dll is not found` | CUDA ライブラリが未導入か、`pip install`（`uv` 無し）で別の Python に入っている。`uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12` を実行し、`doctor` の「CUDA ライブラリ」欄を確認する |
 | 処理がとにかく遅い | GPU が使われていない。`doctor` で `デバイス : cpu` なら [GPU を使う](#gpu-を使う強く推奨)を参照 |
 | 最初の数分、進捗が動かない | 初回の Whisper モデル DL（約 1.5GB）。「モデルを準備しています」と表示される |
 | 「接続が切れました」と出た | ジョブはサーバー側で継続中。自動でポーリングに切り替わり結果まで進む。ブラウザを閉じても、開き直せば復帰する |

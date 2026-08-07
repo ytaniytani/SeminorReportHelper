@@ -143,11 +143,12 @@ def doctor() -> None:
     import os
 
     from seminar_report.media.audio import FFmpegError, ffmpeg_path
+    from seminar_report.transcribe.cuda import ensure_cuda_libs
     from seminar_report.transcribe.whisper import (
+        _cuda_probe,
         _resolve_beam_size,
         _resolve_cpu_threads,
         _resolve_device,
-        cuda_device_count,
     )
 
     settings = get_settings()
@@ -157,7 +158,8 @@ def doctor() -> None:
     except FFmpegError as exc:
         ffmpeg = f"[red]見つかりません({exc})[/]"
 
-    gpus = cuda_device_count()
+    cuda_libs = ensure_cuda_libs()
+    gpus, cuda_error = _cuda_probe()
     device, compute_type = _resolve_device(settings.whisper_device)
 
     console.print("[bold]実行環境[/]")
@@ -166,8 +168,32 @@ def doctor() -> None:
 
     if gpus > 0:
         console.print(f"  CUDA デバイス : [green]{gpus} 台[/]")
+    elif cuda_error and "ctranslate2" in cuda_error:
+        # 文字起こし自体が未導入。CUDA の問題ではないので誤解させない。
+        console.print("  CUDA デバイス : [yellow]判定不可(faster-whisper 未インストール)[/]")
+        console.print("                  [cyan]uv pip install -e \".[asr]\"[/] で導入できます")
+    elif cuda_error:
+        # 「GPU 非搭載」と「判定に失敗」は対処が違う。区別して出す。
+        console.print("  CUDA デバイス : [red]判定に失敗しました[/]")
+        console.print(f"                  {cuda_error}")
     else:
         console.print("  CUDA デバイス : [yellow]なし(CPU で動作します)[/]")
+
+    # CUDA ライブラリの状態。cublas/cudnn は「入れたのに見えない」が起きやすい。
+    console.print("  CUDA ライブラリ:", end=" ")
+    if not cuda_libs.installed:
+        console.print("[yellow]未インストール[/]")
+    else:
+        found = []
+        found.append("cublas [green]✓[/]" if cuda_libs.has_cublas else "cublas [red]✗[/]")
+        found.append("cudnn [green]✓[/]" if cuda_libs.has_cudnn else "cudnn [red]✗[/]")
+        console.print(" / ".join(found))
+        for directory in cuda_libs.registered:
+            console.print(f"                  登録済み: {directory}")
+        if not cuda_libs.registered and cuda_libs.found_libs:
+            console.print("                  [dim](Windows 以外では登録不要)[/]")
+        if cuda_libs.error:
+            console.print(f"                  [red]{cuda_libs.error}[/]")
 
     console.print()
     console.print("[bold]文字起こし[/]")
@@ -181,7 +207,10 @@ def doctor() -> None:
         console.print()
         console.print("[yellow]GPU が検出されませんでした。[/]")
         console.print("  NVIDIA GPU 搭載機なら、次で CUDA ライブラリを入れると大幅に速くなります:")
-        console.print("    [cyan]pip install nvidia-cublas-cu12 nvidia-cudnn-cu12[/]")
+        # `pip install` だと uv の .venv ではなく別の Python に入り、
+        # 「入れたのに見つからない」状態になる。必ず uv 経由で案内する。
+        console.print("    [cyan]uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12[/]")
+        console.print("  [dim]※ `pip install` は別の Python に入るため効きません[/]")
 
     console.print()
     console.print("[bold]LLM[/]")

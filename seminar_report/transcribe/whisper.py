@@ -14,6 +14,7 @@ from pathlib import Path
 from seminar_report.config import get_settings
 from seminar_report.media.audio import extract_audio, file_digest, probe_duration
 from seminar_report.models import Segment, Transcript
+from seminar_report.transcribe.cuda import ensure_cuda_libs
 
 ProgressFn = Callable[[float, str], None]
 """(進捗率, 詳細) を受け取る。"""
@@ -45,12 +46,22 @@ def cuda_device_count() -> int:
     CTranslate2 に直接聞く。torch の有無で判定すると、torch を入れていない
     (かつ本来不要な) 環境で GPU が見えず、常に CPU に落ちてしまう。
     """
+    return _cuda_probe()[0]
+
+
+def _cuda_probe() -> tuple[int, str | None]:
+    """(CUDA デバイス数, 失敗理由)。
+
+    数だけを返すと「GPU が無い」と「判定に失敗した」を区別できず、
+    doctor が誤った案内をしてしまうため、理由も併せて返す。
+    """
+    ensure_cuda_libs()
     try:
         import ctranslate2
 
-        return int(ctranslate2.get_cuda_device_count())
-    except Exception:  # noqa: BLE001 - 判定失敗は「GPU 無し」と同義に扱う
-        return 0
+        return int(ctranslate2.get_cuda_device_count()), None
+    except Exception as exc:  # noqa: BLE001 - 判定失敗は「GPU 無し」として扱う
+        return 0, f"{type(exc).__name__}: {exc}"
 
 
 def _resolve_device(device: str) -> tuple[str, str]:
@@ -86,6 +97,7 @@ def _load_model(model_size: str, device: str, compute_type: str, cpu_threads: in
     その場合に処理ごと失敗させると、GPU 判定を直したことでかえって動かなく
     なるため、必ず CPU へ縮退させる。戻り値は (model, 実際に使った device)。
     """
+    ensure_cuda_libs()
     from faster_whisper import WhisperModel
 
     try:
@@ -94,12 +106,47 @@ def _load_model(model_size: str, device: str, compute_type: str, cpu_threads: in
         )
         return model, device, None
     except Exception as exc:  # noqa: BLE001 - CUDA 環境の不備を握って縮退する
-        if device != "cuda":
-            raise
+        first_error = exc
+
+    # CPU 指定でも CUDA ライブラリの不足で落ちることがある(CTranslate2 の
+    # Windows ビルドは CUDA 付きで、読み込み時に cublas を要求する場合がある)。
+    # その場合も CPU での再試行に意味があるため、device を問わず縮退を試みる。
+    try:
         model = WhisperModel(
             model_size, device="cpu", compute_type="int8", cpu_threads=cpu_threads
         )
-        return model, "cpu", str(exc)
+        return model, "cpu", str(first_error)
+    except Exception as exc:
+        raise RuntimeError(_load_failure_message(first_error, exc)) from exc
+
+
+def _load_failure_message(first_error: Exception, cpu_error: Exception) -> str:
+    """CPU へ縮退しても読み込めなかったときの、対処が分かる文面を組み立てる。"""
+    lines = [
+        "文字起こしモデルを読み込めませんでした。",
+        f"  最初のエラー: {type(first_error).__name__}: {first_error}",
+    ]
+    if str(cpu_error) != str(first_error):
+        lines.append(f"  CPU 再試行時: {type(cpu_error).__name__}: {cpu_error}")
+
+    if "cublas" in str(first_error).lower() or "cudnn" in str(first_error).lower():
+        status = ensure_cuda_libs()
+        lines.append("")
+        lines.append("CUDA ライブラリが見つかっていません。次を確認してください:")
+        if not status.installed:
+            lines.append(
+                "  1) 未インストールです。プロジェクト直下で次を実行してください:"
+            )
+            lines.append(
+                "     uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12"
+            )
+            lines.append(
+                "     ※ `pip install` だと別の Python に入り、ここからは見えません"
+            )
+        else:
+            lines.append(f"  1) インストール済みですが読み込めません（{len(status.registered)} 個のパスを登録済み）")
+            lines.append("  2) `seminar-report doctor` で詳細を確認してください")
+    return "\n".join(lines)
 
 
 def transcribe(
