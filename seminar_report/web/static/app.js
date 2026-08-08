@@ -7,6 +7,12 @@ let jobId = null;
 let report = null;
 let autoOpenWindow = null;
 
+// 複数動画を選択したときのキュー。1本のみの選択時は空のままで、
+// 既存の単一ジョブの経路(JOB_KEY 側)をそのまま使う。
+let queue = [];
+let queueIndex = -1;
+let queueSettings = null;
+
 // ジョブ ID を変数だけで持つと、リロードした瞬間に走行中のジョブへ戻れなくなる。
 const JOB_KEY = "seminar-report:job";
 
@@ -22,6 +28,30 @@ function rememberJob(id) {
 function clearJob() {
   try {
     localStorage.removeItem(JOB_KEY);
+  } catch {
+    /* 同上 */
+  }
+}
+
+// バッチ(複数動画)の進行状況。File オブジェクトは保存できないため、
+// ジョブIDと状態だけを永続化する。リロード後は「まだ送信していない動画」は
+// 復元できない(ブラウザの制約)。
+const QUEUE_KEY = "seminar-report:queue";
+
+function saveQueue() {
+  try {
+    localStorage.setItem(
+      QUEUE_KEY,
+      JSON.stringify(queue.map((item) => ({ name: item.name, jobId: item.jobId, status: item.status, error: item.error })))
+    );
+  } catch {
+    /* 同上 */
+  }
+}
+
+function clearQueue() {
+  try {
+    localStorage.removeItem(QUEUE_KEY);
   } catch {
     /* 同上 */
   }
@@ -122,8 +152,54 @@ async function init() {
   $("auto-open-html").addEventListener("change", () =>
     rememberAutoOpen($("auto-open-html").checked)
   );
+  updateAutoOpenAvailability(0);
 
+  await resumeState();
+}
+
+/** バッチが途中だった場合はそちらを優先し、無ければ単一ジョブの復帰を試みる。 */
+async function resumeState() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(QUEUE_KEY);
+  } catch {
+    saved = null;
+  }
+  if (saved) {
+    try {
+      await resumeQueue(JSON.parse(saved));
+      return;
+    } catch {
+      clearQueue();
+    }
+  }
   await resumePreviousJob();
+}
+
+/** バッチ処理の途中でリロードされた場合、既に送信済みのジョブの状態を復元する。 */
+async function resumeQueue(saved) {
+  queue = saved.map((item) => ({
+    file: null,
+    name: item.name,
+    jobId: item.jobId,
+    status: item.status,
+    error: item.error || null,
+  }));
+  queueIndex = queue.findIndex((item) => item.status === "processing");
+
+  if (queueIndex === -1) {
+    // 処理中のものが無い = 前回のバッチは完了(または未開始)している
+    finishQueue();
+    return;
+  }
+
+  jobId = queue[queueIndex].jobId;
+  showView("progress");
+  showBatchPanel();
+  renderBatchList();
+  $("batch-heading").textContent = `動画 ${queueIndex + 1}/${queue.length}: ${queue[queueIndex].name}`;
+  $("progress-label").textContent = "処理中のジョブに再接続しています…";
+  listen();
 }
 
 /** 前回のジョブが残っていれば、その状態に復帰する。 */
@@ -199,11 +275,36 @@ drop.addEventListener("drop", (event) => {
 videoInput.addEventListener("change", onFileChosen);
 
 function onFileChosen() {
-  const file = videoInput.files[0];
-  if (!file) return;
-  const mb = (file.size / 1024 / 1024).toFixed(1);
-  $("drop-label").textContent = `${file.name}（${mb} MB）`;
+  const files = Array.from(videoInput.files);
+  if (!files.length) return;
+
+  if (files.length === 1) {
+    const file = files[0];
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    $("drop-label").textContent = `${file.name}（${mb} MB）`;
+  } else {
+    const totalMb = (files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024).toFixed(1);
+    $("drop-label").textContent =
+      `${files.length} 件選択（合計 ${totalMb} MB）: ${files.map((f) => f.name).join(", ")}`;
+  }
   $("submit").disabled = false;
+  updateAutoOpenAvailability(files.length);
+}
+
+// ポップアップは同期的なユーザー操作の直後にしか開けない。複数動画は
+// 非同期に完了していくため、2本目以降の自動タブオープンはブロックされる。
+// バッチ時は自動オープンを諦め、完了した動画ごとに手動リンクを出す。
+function updateAutoOpenAvailability(count) {
+  const checkbox = $("auto-open-html");
+  const hint = $("auto-open-hint");
+  if (count > 1) {
+    checkbox.disabled = true;
+    hint.textContent =
+      "（複数選択時は無効。完了した動画ごとにリンクから開いてください）";
+  } else {
+    checkbox.disabled = false;
+    hint.textContent = "";
+  }
 }
 
 // ---- 切り出し範囲ピッカー ----
@@ -339,38 +440,85 @@ function onFileChosen() {
 })();
 
 // ---- 送信 ----
+// 動画の切り出し範囲・LLMプロバイダ/モデル・詳細度などの生成条件は、
+// フォームから一度だけ読み取ってキュー内の全動画で使い回す。
+function readFormSettings() {
+  return {
+    detail: $("detail").value,
+    target_chars: $("target-chars").value,
+    provider: $("provider").value,
+    model: $("model").value,
+    whisper_model: $("whisper-model").value,
+    audio_language: $("audio-language").value,
+    verify_captures: $("verify-captures").checked,
+    include_images: $("include-images").checked,
+    crop: $("crop").value,
+    user_request: $("user-request").value,
+  };
+}
+
+function buildJobForm(file, settings) {
+  const form = new FormData();
+  form.append("video", file);
+  form.append("detail", settings.detail);
+  form.append("target_chars", settings.target_chars);
+  form.append("provider", settings.provider);
+  form.append("model", settings.model);
+  form.append("whisper_model", settings.whisper_model);
+  form.append("audio_language", settings.audio_language);
+  form.append("verify_captures", settings.verify_captures ? "true" : "false");
+  form.append("include_images", settings.include_images ? "true" : "false");
+  form.append("crop", settings.crop);
+  form.append("user_request", settings.user_request);
+  return form;
+}
+
 $("upload-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const file = videoInput.files[0];
-  if (!file) return;
+  const files = Array.from(videoInput.files);
+  if (!files.length) return;
 
+  const settings = readFormSettings();
+
+  if (files.length === 1) {
+    queue = [];
+    clearQueue();
+    await submitSingle(files[0], settings);
+    return;
+  }
+
+  queue = files.map((file) => ({
+    file,
+    name: file.name,
+    jobId: null,
+    status: "pending",
+    error: null,
+  }));
+  queueIndex = -1;
+  saveQueue();
+
+  showView("progress");
+  showBatchPanel();
+  $("log").innerHTML = "";
+  await advanceQueue(settings);
+});
+
+async function submitSingle(file, settings) {
   // ジョブ完了は非同期(SSE/ポーリング)で分かるため、そのタイミングで
   // window.open() してもポップアップブロックされる。クリックというユーザー
   // 操作の直後・同期的なうちに空タブを開いておき、完了時に navigate する。
   autoOpenWindow =
     $("auto-open-html").checked ? window.open("about:blank", "_blank") : null;
 
-  const form = new FormData();
-  form.append("video", file);
-  form.append("detail", $("detail").value);
-  form.append("target_chars", $("target-chars").value);
-  form.append("provider", $("provider").value);
-  form.append("model", $("model").value);
-  form.append("whisper_model", $("whisper-model").value);
-  form.append("audio_language", $("audio-language").value);
-  form.append("verify_captures", $("verify-captures").checked ? "true" : "false");
-  form.append("include_images", $("include-images").checked ? "true" : "false");
-  form.append("crop", $("crop").value);
-  form.append("user_request", $("user-request").value);
-
   showView("progress");
+  hideBatchPanel();
   $("log").innerHTML = "";
   $("progress-label").textContent = "アップロードしています…";
   $("bar-fill").style.width = "0%";
 
   let jobIdFromUpload;
   try {
-    jobIdFromUpload = await uploadJob(form);
+    jobIdFromUpload = await uploadJob(buildJobForm(file, settings));
   } catch (error) {
     showFailure(error.message);
     return;
@@ -379,7 +527,56 @@ $("upload-form").addEventListener("submit", async (event) => {
   rememberJob(jobIdFromUpload);
   lastStep = null;
   listen();
-});
+}
+
+/** キューの次の動画を送信する。全件終わっていればバッチ完了画面を出す。 */
+async function advanceQueue(settings) {
+  if (settings) queueSettings = settings;
+  queueIndex += 1;
+
+  if (queueIndex >= queue.length) {
+    finishQueue();
+    return;
+  }
+
+  const item = queue[queueIndex];
+  item.status = "processing";
+  saveQueue();
+  renderBatchList();
+  $("batch-heading").textContent = `動画 ${queueIndex + 1}/${queue.length}: ${item.name}`;
+  $("progress-label").textContent = "アップロードしています…";
+  $("progress-detail").textContent = "";
+  $("bar-fill").style.width = "0%";
+  $("log").innerHTML = "";
+  lastStep = null;
+
+  if (!item.file) {
+    // リロードでFile参照を失った(未送信のまま残っていた)動画は送り直せない
+    item.status = "failed";
+    item.error = "リロード前に未送信だった動画です。もう一度選び直してください";
+    saveQueue();
+    renderBatchList();
+    await advanceQueue();
+    return;
+  }
+
+  let jobIdFromUpload;
+  try {
+    jobIdFromUpload = await uploadJob(buildJobForm(item.file, queueSettings));
+  } catch (error) {
+    item.status = "failed";
+    item.error = error.message;
+    saveQueue();
+    renderBatchList();
+    await advanceQueue();
+    return;
+  }
+
+  item.jobId = jobIdFromUpload;
+  jobId = jobIdFromUpload;
+  saveQueue();
+  listen();
+}
 
 // fetch() は送信side の進捗を取れないため XHR を使う。数百MB〜GB の動画では
 // 進捗が出ないと「固まった」と誤解され、リロードや強制終了を招く。
@@ -488,12 +685,7 @@ function listen() {
 
   source.addEventListener("end", async (event) => {
     source.close();
-    const data = JSON.parse(event.data);
-    if (data.status === "failed") {
-      showFailure(data.error, data.traceback);
-      return;
-    }
-    await loadReport();
+    await onJobFinished(JSON.parse(event.data));
   });
 
   source.onerror = () => {
@@ -518,19 +710,37 @@ function startPolling() {
       return;
     }
 
-    if (data.status === "failed") {
+    if (data.status === "failed" || data.status === "done") {
       stopPolling();
-      showFailure(data.error, data.traceback);
-      return;
-    }
-    if (data.status === "done") {
-      stopPolling();
-      await loadReport();
+      await onJobFinished(data);
       return;
     }
     $("progress-label").textContent = "処理中です…";
     $("progress-detail").textContent = "接続が切れたため、状態を定期確認しています";
   }, 3000);
+}
+
+/** ジョブ1本の完了(成功/失敗)を、単一動画とバッチ動画それぞれの流儀で処理する。 */
+async function onJobFinished(data) {
+  if (queue.length) {
+    const item = queue[queueIndex];
+    if (data.status === "failed") {
+      item.status = "failed";
+      item.error = data.error;
+    } else {
+      item.status = "done";
+    }
+    saveQueue();
+    renderBatchList();
+    await advanceQueue();
+    return;
+  }
+
+  if (data.status === "failed") {
+    showFailure(data.error, data.traceback);
+    return;
+  }
+  await loadReport();
 }
 
 function stopPolling() {
@@ -725,9 +935,114 @@ $("restart").addEventListener("click", () => {
   lastStep = null;
   $("log").innerHTML = "";
   videoInput.value = "";
-  $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択";
+  $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）";
   $("submit").disabled = true;
+  updateAutoOpenAvailability(0);
   setStatus("");
+  showView("upload");
+});
+
+// ---- バッチ(複数動画)の進捗・完了表示 ----
+function showBatchPanel() {
+  $("batch-status").hidden = false;
+}
+
+function hideBatchPanel() {
+  $("batch-status").hidden = true;
+}
+
+const BATCH_STATE_LABELS = {
+  pending: "待機中",
+  processing: "処理中…",
+  done: "完了",
+  failed: "失敗",
+};
+
+function renderBatchList() {
+  const list = $("batch-list");
+  list.innerHTML = "";
+  for (const item of queue) {
+    const li = document.createElement("li");
+    li.className = item.status;
+
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = item.name;
+    li.appendChild(name);
+
+    const state = document.createElement("span");
+    state.className = "state";
+    state.textContent =
+      item.status === "failed" && item.error
+        ? `失敗: ${item.error}`
+        : BATCH_STATE_LABELS[item.status] || item.status;
+    li.appendChild(state);
+
+    if (item.status === "done" && item.jobId) {
+      const link = document.createElement("a");
+      link.href = `/api/jobs/${item.jobId}/html`;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "report.html を開く";
+      li.appendChild(link);
+    }
+
+    list.appendChild(li);
+  }
+}
+
+/** バッチの全動画が終わったら、動画ごとのリンク一覧を出す完了画面へ切り替える。 */
+function finishQueue() {
+  clearQueue();
+  const doneCount = queue.filter((item) => item.status === "done").length;
+  $("batch-summary").textContent = `${queue.length} 件中 ${doneCount} 件成功`;
+
+  const list = $("batch-result-list");
+  list.innerHTML = "";
+  for (const item of queue) {
+    const li = document.createElement("li");
+    li.className = item.status;
+
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = item.name;
+    li.appendChild(name);
+
+    if (item.status === "done" && item.jobId) {
+      const htmlLink = document.createElement("a");
+      htmlLink.href = `/api/jobs/${item.jobId}/html`;
+      htmlLink.target = "_blank";
+      htmlLink.rel = "noopener";
+      htmlLink.textContent = "report.html を開く";
+      li.appendChild(htmlLink);
+
+      const zipLink = document.createElement("a");
+      zipLink.href = `/api/jobs/${item.jobId}/export`;
+      zipLink.textContent = "ZIP";
+      li.appendChild(zipLink);
+    } else {
+      const state = document.createElement("span");
+      state.className = "state";
+      state.textContent = `失敗: ${item.error || ""}`;
+      li.appendChild(state);
+    }
+
+    list.appendChild(li);
+  }
+
+  showView("batch");
+}
+
+$("batch-restart").addEventListener("click", () => {
+  queue = [];
+  queueIndex = -1;
+  queueSettings = null;
+  jobId = null;
+  clearQueue();
+  videoInput.value = "";
+  $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）";
+  $("submit").disabled = true;
+  updateAutoOpenAvailability(0);
   showView("upload");
 });
 
