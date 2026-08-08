@@ -17,8 +17,8 @@
     <section id="view-upload" class="view active">
       <form id="upload-form">
         <div class="drop" id="drop">
-          <input type="file" id="video" accept="video/mp4,video/*" hidden />
-          <p id="drop-label">ここに .mp4 をドロップ、またはクリックして選択</p>
+          <input type="file" id="video" accept="video/mp4,video/*" multiple hidden />
+          <p id="drop-label">ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）</p>
         </div>
 
         <div class="grid">
@@ -100,7 +100,10 @@
         <div class="checks">
           <label class="check"><input type="checkbox" id="include-images" checked /> 画像を入れる</label>
           <label class="check"><input type="checkbox" id="verify-captures" /> AI で画像を検証する（精度↑・コスト↑）</label>
-          <label class="check"><input type="checkbox" id="auto-open-html" checked /> 完了時にレポートを新しいタブで開く</label>
+          <label class="check">
+            <input type="checkbox" id="auto-open-html" checked /> 完了時にレポートを新しいタブで開く
+            <span class="hint" id="auto-open-hint"></span>
+          </label>
         </div>
 
         <button type="submit" id="submit" disabled>レポートを生成</button>
@@ -109,6 +112,10 @@
 
     <!-- 2. 進捗 -->
     <section id="view-progress" class="view">
+      <div id="batch-status" class="block batch-status" hidden>
+        <h3 id="batch-heading"></h3>
+        <ul id="batch-list" class="batch-list"></ul>
+      </div>
       <h2 id="progress-label">処理中…</h2>
       <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
       <p class="detail" id="progress-detail"></p>
@@ -150,6 +157,16 @@
         <button id="restart" class="ghost">別の動画を処理</button>
       </div>
       <p id="status" class="status"></p>
+    </section>
+
+    <!-- 4. バッチ完了 -->
+    <section id="view-batch" class="view">
+      <h2>バッチ処理が完了しました</h2>
+      <p class="meta" id="batch-summary"></p>
+      <ul id="batch-result-list" class="batch-list"></ul>
+      <div class="actions">
+        <button id="batch-restart" class="ghost">別の動画を処理</button>
+      </div>
     </section>
   </main>
 

@@ -35,7 +35,9 @@ def _progress_printer() -> callable:
 
 @app.command()
 def run(
-    video: Path = typer.Argument(..., exists=True, dir_okay=False, help="入力の .mp4"),
+    videos: list[Path] = typer.Argument(
+        ..., exists=True, dir_okay=False, help="入力の .mp4(複数指定すると同じ条件で順番に処理する)"
+    ),
     detail: DetailLevel = typer.Option(DetailLevel.STANDARD, "--detail", "-d", help="詳細度"),
     chars: int | None = typer.Option(None, "--chars", "-c", help="目標文字数(指定時は --detail より優先)"),
     max_captures: int | None = typer.Option(
@@ -43,7 +45,9 @@ def run(
     ),
     provider: str | None = typer.Option(None, "--provider", "-p", help="claude | openai | ollama"),
     model: str | None = typer.Option(None, "--model", "-m", help="使用するモデル名(未指定なら .env の既定値)"),
-    out: Path | None = typer.Option(None, "--out", "-o", help="出力先ディレクトリ"),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="出力先ディレクトリ(複数動画を指定した場合は親ディレクトリとして扱う)"
+    ),
     whisper_model: str | None = typer.Option(None, "--whisper-model", help="tiny/base/small/medium/large-v3"),
     language: str | None = typer.Option(None, "--language", help="レポートの出力言語"),
     audio_language: str | None = typer.Option(None, "--audio-language", help="音声の言語(既定は自動判定)"),
@@ -65,11 +69,10 @@ def run(
     space: str | None = typer.Option(None, "--space", help="Confluence スペースキー"),
     title: str | None = typer.Option(None, "--title", help="Confluence ページタイトル"),
 ) -> None:
-    """動画からレポートを生成する。"""
+    """動画からレポートを生成する(複数指定した場合は同じ条件で1本ずつ順番に処理する)。"""
     from seminar_report.media.frames import parse_crop_box
 
     settings = get_settings()
-    output_dir = out or settings.output_dir / video.stem
 
     capture_crop = None
     if crop:
@@ -79,6 +82,8 @@ def run(
             console.print(f"[red]--crop が不正です: {exc}[/]")
             raise typer.Exit(1) from exc
 
+    # 動画ごとに条件を変える理由が無い(切り出し範囲・モデル・詳細度などは
+    # 同じ登壇環境・同じ用途で撮った動画に使い回すのが普通)ため、1回だけ組み立てる。
     options = PipelineOptions(
         detail=detail,
         target_chars=chars,
@@ -95,20 +100,51 @@ def run(
         user_request=request,
     )
 
-    result = run_pipeline(video, output_dir, options, _progress_printer())
-    report = result.report
+    multi = len(videos) > 1
+    succeeded = 0
+    for index, video in enumerate(videos, start=1):
+        if multi:
+            console.print(f"[bold cyan]▶[/] [{index}/{len(videos)}] {video.name}")
 
-    included = sum(1 for c in report.captures if c.included)
-    console.print()
-    console.print(f"[bold green]✓[/] {report.title}")
-    console.print(f"  本文 {report.body_char_count()} 字 / {len(report.sections)} セクション / 画像 {included} 枚")
-    console.print(f"  出力: {result.output_dir}")
+        # 単一動画時は従来どおり --out をそのまま出力先にする(互換維持)。
+        # 複数動画時は全動画が同じ場所に書き込まれてしまうため、--out を
+        # 親ディレクトリとして扱い、動画ごとのサブディレクトリに分ける。
+        if not multi and out is not None:
+            output_dir = out
+        else:
+            output_dir = (out or settings.output_dir) / video.stem
 
-    zip_path = export_zip(output_dir, report)
-    console.print(f"  ZIP : {zip_path}")
+        try:
+            result = run_pipeline(video, output_dir, options, _progress_printer())
+            report = result.report
 
-    if publish:
-        _publish(report, space, title)
+            included = sum(1 for c in report.captures if c.included)
+            console.print()
+            console.print(f"[bold green]✓[/] {report.title}")
+            console.print(
+                f"  本文 {report.body_char_count()} 字 / {len(report.sections)} セクション / 画像 {included} 枚"
+            )
+            console.print(f"  出力: {result.output_dir}")
+
+            zip_path = export_zip(output_dir, report)
+            console.print(f"  ZIP : {zip_path}")
+
+            if publish:
+                _publish(report, space, title)
+        except Exception as exc:  # noqa: BLE001 - 1本の失敗で残りを諦めさせないため
+            console.print(f"[red]✗ 失敗: {exc}[/]")
+            if multi:
+                console.print()
+                continue
+            raise
+        else:
+            succeeded += 1
+
+    if multi:
+        console.print()
+        console.print(f"[bold]完了: {succeeded}/{len(videos)} 件成功[/]")
+        if succeeded < len(videos):
+            raise typer.Exit(1)
 
 
 @app.command("publish")
