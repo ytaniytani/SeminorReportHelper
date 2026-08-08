@@ -201,6 +201,25 @@ async function resumeQueue(saved) {
   }
 
   jobId = queue[queueIndex].jobId;
+
+  // サーバー再起動でジョブがメモリから消えていると、listen() の SSE がすぐ
+  // 失敗してポーリングに落ち、404 を延々と繰り返すことになる。先に存在を
+  // 確認し、無ければバッチごと諦めて投入画面に戻す。
+  let exists = true;
+  try {
+    const response = await fetch(`/api/jobs/${jobId}`);
+    exists = response.ok;
+  } catch {
+    // 応答が取れない場合は判断できないので、いつも通り再接続を試みる
+    exists = true;
+  }
+  if (!exists) {
+    clearQueue();
+    queue = [];
+    queueIndex = -1;
+    throw new Error("job not found");
+  }
+
   showView("progress");
   beginProgressView();
   showBatchPanel();
@@ -825,18 +844,32 @@ function listen() {
 function startPolling() {
   if (pollTimer) return;
   pollTimer = setInterval(async () => {
-    let data;
+    let response;
     try {
-      const response = await fetch(`/api/jobs/${jobId}`);
-      if (!response.ok) throw new Error(String(response.status));
-      data = await response.json();
+      response = await fetch(`/api/jobs/${jobId}`);
     } catch {
+      // ネットワーク瞬断など。回復する見込みがあるのでリトライを続ける。
       $("progress-detail").textContent =
         "サーバーに接続できません。起動したままか確認してください（再試行中）";
       return;
     }
 
-    if (data.status === "failed" || data.status === "done") {
+    if (response.status === 404) {
+      // サーバーの再起動などでジョブ自体が消えている。何度リトライしても
+      // 成功しないので、ここで諦めて利用者に知らせる(でないと 404 を
+      // 3秒おきに延々と繰り返すだけになる)。
+      stopPolling();
+      await handleJobNotFound();
+      return;
+    }
+    if (!response.ok) {
+      $("progress-detail").textContent =
+        "サーバーに接続できません。起動したままか確認してください（再試行中）";
+      return;
+    }
+
+    const data = await response.json();
+    if (data.status === "failed" || data.status === "done" || data.status === "cancelled") {
       stopPolling();
       await onJobFinished(data);
       return;
@@ -844,6 +877,29 @@ function startPolling() {
     $("progress-label").textContent = "処理中です…";
     $("progress-detail").textContent = "接続が切れたため、状態を定期確認しています";
   }, 3000);
+}
+
+/** ジョブがサーバー側から見つからなくなった場合の処理(主にサーバー再起動)。
+ * リトライしても回復しないため、ポーリングを止めて分かりやすく知らせる。 */
+async function handleJobNotFound() {
+  if (queue.length) {
+    const item = queue[queueIndex];
+    item.status = "failed";
+    item.error = "サーバーが再起動されたため、ジョブの情報が失われました";
+    saveQueue();
+    renderBatchList();
+    await advanceQueue();
+    return;
+  }
+
+  $("progress-label").textContent = "ジョブが見つかりません";
+  $("progress-detail").textContent =
+    "サーバーが再起動された可能性があります。もう一度動画を選択してやり直してください。";
+  $("progress-detail").style.whiteSpace = "normal";
+  $("bar-fill").style.width = "0%";
+  closeAutoOpenWindow();
+  clearJob();
+  setProgressButtons({ cancel: false, back: true });
 }
 
 /** ジョブ1本の完了(成功/失敗)を、単一動画とバッチ動画それぞれの流儀で処理する。 */
