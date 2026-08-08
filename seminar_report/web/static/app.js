@@ -12,6 +12,13 @@ let autoOpenWindow = null;
 let queue = [];
 let queueIndex = -1;
 let queueSettings = null;
+let queueAborted = false;
+
+// 中止まわり。アップロード中はまだジョブが無いので、転送している XHR 自体を
+// 打ち切る必要がある。cancelRequested は「中断は利用者の意思によるものか」を
+// 判別するためのフラグ(失敗表示にしないため)。
+let cancelRequested = false;
+let currentXhr = null;
 
 // ジョブ ID を変数だけで持つと、リロードした瞬間に走行中のジョブへ戻れなくなる。
 const JOB_KEY = "seminar-report:job";
@@ -195,6 +202,7 @@ async function resumeQueue(saved) {
 
   jobId = queue[queueIndex].jobId;
   showView("progress");
+  beginProgressView();
   showBatchPanel();
   renderBatchList();
   $("batch-heading").textContent = `動画 ${queueIndex + 1}/${queue.length}: ${queue[queueIndex].name}`;
@@ -232,9 +240,16 @@ async function resumePreviousJob() {
     setStatus("前回のジョブを復帰しました");
   } else if (data.status === "failed") {
     showView("progress");
+    hideBatchPanel();
     showFailure(data.error, data.traceback);
+  } else if (data.status === "cancelled") {
+    showView("progress");
+    hideBatchPanel();
+    showCancelled();
   } else {
     showView("progress");
+    beginProgressView();
+    hideBatchPanel();
     $("progress-label").textContent = "処理中のジョブに再接続しています…";
     listen();
   }
@@ -495,9 +510,11 @@ $("upload-form").addEventListener("submit", async (event) => {
     error: null,
   }));
   queueIndex = -1;
+  queueAborted = false;
   saveQueue();
 
   showView("progress");
+  beginProgressView();
   showBatchPanel();
   $("log").innerHTML = "";
   await advanceQueue(settings);
@@ -511,6 +528,7 @@ async function submitSingle(file, settings) {
     $("auto-open-html").checked ? window.open("about:blank", "_blank") : null;
 
   showView("progress");
+  beginProgressView();
   hideBatchPanel();
   $("log").innerHTML = "";
   $("progress-label").textContent = "アップロードしています…";
@@ -520,6 +538,11 @@ async function submitSingle(file, settings) {
   try {
     jobIdFromUpload = await uploadJob(buildJobForm(file, settings));
   } catch (error) {
+    // アップロード中に中止ボタンを押した場合は、失敗ではなく中止として扱う
+    if (cancelRequested) {
+      showCancelled();
+      return;
+    }
     showFailure(error.message);
     return;
   }
@@ -532,6 +555,16 @@ async function submitSingle(file, settings) {
 /** キューの次の動画を送信する。全件終わっていればバッチ完了画面を出す。 */
 async function advanceQueue(settings) {
   if (settings) queueSettings = settings;
+
+  // 中止された場合は次の動画に進まず、未処理分をまとめて中止扱いにする
+  if (queueAborted) {
+    for (const item of queue) {
+      if (item.status === "pending") item.status = "cancelled";
+    }
+    finishQueue();
+    return;
+  }
+
   queueIndex += 1;
 
   if (queueIndex >= queue.length) {
@@ -564,8 +597,13 @@ async function advanceQueue(settings) {
   try {
     jobIdFromUpload = await uploadJob(buildJobForm(item.file, queueSettings));
   } catch (error) {
-    item.status = "failed";
-    item.error = error.message;
+    // アップロード中の中止は失敗として数えない
+    if (queueAborted) {
+      item.status = "cancelled";
+    } else {
+      item.status = "failed";
+      item.error = error.message;
+    }
     saveQueue();
     renderBatchList();
     await advanceQueue();
@@ -583,6 +621,8 @@ async function advanceQueue(settings) {
 function uploadJob(form) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    // 中止ボタンから転送を打ち切れるように参照を持っておく
+    currentXhr = xhr;
     xhr.open("POST", "/api/jobs");
 
     xhr.upload.onprogress = (event) => {
@@ -601,6 +641,7 @@ function uploadJob(form) {
     };
 
     xhr.onload = () => {
+      currentXhr = null;
       if (xhr.status < 200 || xhr.status >= 300) {
         reject(new Error(`アップロードに失敗しました (HTTP ${xhr.status})`));
         return;
@@ -612,9 +653,14 @@ function uploadJob(form) {
       }
     };
 
-    xhr.onerror = () =>
+    xhr.onerror = () => {
+      currentXhr = null;
       reject(new Error("サーバーに接続できません。起動したままか確認してください"));
-    xhr.onabort = () => reject(new Error("アップロードが中断されました"));
+    };
+    xhr.onabort = () => {
+      currentXhr = null;
+      reject(new Error("アップロードが中断されました"));
+    };
 
     xhr.send(form);
   });
@@ -632,8 +678,12 @@ let lastStep = null;
 let pollTimer = null;
 
 function showStep(data) {
-  $("progress-label").textContent = data.label;
-  $("progress-detail").textContent = data.detail || "";
+  // 中止を要求した後は「停止しています…」の表示を残す。停止は次の関門まで
+  // 数秒かかることがあり、その間に進捗が上書きされると押せていないように見える。
+  if (!cancelRequested) {
+    $("progress-label").textContent = data.label;
+    $("progress-detail").textContent = data.detail || "";
+  }
   $("bar-fill").style.width = `${Math.round((data.ratio || 0) * 100)}%`;
 
   if (data.step !== lastStep) {
@@ -643,6 +693,83 @@ function showStep(data) {
     $("log").appendChild(item);
   }
 }
+
+// ---- 中止 ----
+function setProgressButtons({ cancel, back }) {
+  $("cancel-job").hidden = !cancel;
+  $("cancel-job").disabled = false;
+  $("progress-back").hidden = !back;
+}
+
+/** 進捗画面に入るときの初期状態(中止ボタンだけを出す)。 */
+function beginProgressView() {
+  cancelRequested = false;
+  setProgressButtons({ cancel: true, back: false });
+}
+
+function cancelConfirmMessage() {
+  if (queue.length) {
+    const remaining = queue.length - queueIndex - 1;
+    const current = queue[queueIndex]?.name ?? "";
+    return (
+      `処理を中止しますか？\n\n` +
+      `処理中の「${current}」を中止し、残り ${remaining} 件の動画も処理しません。\n` +
+      `完了済みの動画のレポートはそのまま残ります。`
+    );
+  }
+  return (
+    "処理を中止しますか？\n\n" +
+    "ここまでの処理内容は破棄され、レポートは作成されません。\n" +
+    "（文字起こしが終わっていればキャッシュに残るため、やり直しは速くなります）"
+  );
+}
+
+$("cancel-job").addEventListener("click", async () => {
+  if (!confirm(cancelConfirmMessage())) return;
+
+  cancelRequested = true;
+  if (queue.length) queueAborted = true;
+
+  $("cancel-job").disabled = true;
+  $("progress-label").textContent = "停止しています…";
+  $("progress-detail").textContent = "現在の処理の区切りで停止します。少しお待ちください";
+
+  // アップロード中はまだジョブ ID が無い。転送そのものを打ち切る。
+  if (currentXhr) {
+    currentXhr.abort();
+    return;
+  }
+  if (!jobId) return;
+
+  try {
+    await fetch(`/api/jobs/${jobId}/cancel`, { method: "POST" });
+  } catch {
+    // 応答が取れなくてもサーバー側のフラグは立っている可能性がある。
+    // 実際の停止は SSE / ポーリングの結果で拾う。
+  }
+});
+
+/** 中止が完了したときの表示(単一動画の場合)。 */
+function showCancelled() {
+  stopPolling();
+  $("progress-label").textContent = "処理を中止しました";
+  $("progress-detail").textContent = "レポートは作成されていません。";
+  $("progress-detail").style.whiteSpace = "normal";
+  $("bar-fill").style.width = "0%";
+  closeAutoOpenWindow();
+  clearJob();
+  setProgressButtons({ cancel: false, back: true });
+}
+
+/** 送信時に開いておいた空タブを閉じる(使い道が無くなった場合)。 */
+function closeAutoOpenWindow() {
+  if (autoOpenWindow && !autoOpenWindow.closed) {
+    autoOpenWindow.close();
+  }
+  autoOpenWindow = null;
+}
+
+$("progress-back").addEventListener("click", () => resetToUploadView());
 
 function showFailure(error, trace) {
   $("progress-label").textContent = "失敗しました";
@@ -670,12 +797,11 @@ function showFailure(error, trace) {
 
   // 開いておいた空タブは使い道が無くなったので閉じる(自動生成した about:blank
   // タブが残り続けると混乱するため)。
-  if (autoOpenWindow && !autoOpenWindow.closed) {
-    autoOpenWindow.close();
-  }
-  autoOpenWindow = null;
+  closeAutoOpenWindow();
 
   clearJob();
+  // 失敗した画面で手詰まりにさせない
+  setProgressButtons({ cancel: false, back: true });
 }
 
 function listen() {
@@ -724,7 +850,12 @@ function startPolling() {
 async function onJobFinished(data) {
   if (queue.length) {
     const item = queue[queueIndex];
-    if (data.status === "failed") {
+    if (data.status === "cancelled") {
+      item.status = "cancelled";
+      // 中止は「このバッチをやめる」という意思表示。リロードを挟んで中止済みの
+      // ジョブに再接続した場合も、残りを勝手に処理し始めないようにする。
+      queueAborted = true;
+    } else if (data.status === "failed") {
       item.status = "failed";
       item.error = data.error;
     } else {
@@ -732,10 +863,15 @@ async function onJobFinished(data) {
     }
     saveQueue();
     renderBatchList();
+    // 中止されていれば advanceQueue が残りを処理せずに打ち切る
     await advanceQueue();
     return;
   }
 
+  if (data.status === "cancelled") {
+    showCancelled();
+    return;
+  }
   if (data.status === "failed") {
     showFailure(data.error, data.traceback);
     return;
@@ -927,12 +1063,20 @@ $("publish").addEventListener("click", async () => {
   window.open(data.url, "_blank");
 });
 
-$("restart").addEventListener("click", () => {
+/** 投入画面に戻して、次の動画を受け付けられる状態にする。 */
+function resetToUploadView() {
   stopPolling();
   clearJob();
+  clearQueue();
   jobId = null;
   report = null;
   lastStep = null;
+  queue = [];
+  queueIndex = -1;
+  queueSettings = null;
+  queueAborted = false;
+  cancelRequested = false;
+  currentXhr = null;
   $("log").innerHTML = "";
   videoInput.value = "";
   $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）";
@@ -940,7 +1084,9 @@ $("restart").addEventListener("click", () => {
   updateAutoOpenAvailability(0);
   setStatus("");
   showView("upload");
-});
+}
+
+$("restart").addEventListener("click", resetToUploadView);
 
 // ---- バッチ(複数動画)の進捗・完了表示 ----
 function showBatchPanel() {
@@ -956,6 +1102,7 @@ const BATCH_STATE_LABELS = {
   processing: "処理中…",
   done: "完了",
   failed: "失敗",
+  cancelled: "中止",
 };
 
 function renderBatchList() {
@@ -994,8 +1141,13 @@ function renderBatchList() {
 /** バッチの全動画が終わったら、動画ごとのリンク一覧を出す完了画面へ切り替える。 */
 function finishQueue() {
   clearQueue();
+  setProgressButtons({ cancel: false, back: false });
+
   const doneCount = queue.filter((item) => item.status === "done").length;
-  $("batch-summary").textContent = `${queue.length} 件中 ${doneCount} 件成功`;
+  const cancelledCount = queue.filter((item) => item.status === "cancelled").length;
+  let summary = `${queue.length} 件中 ${doneCount} 件成功`;
+  if (cancelledCount) summary += `（${cancelledCount} 件は中止）`;
+  $("batch-summary").textContent = summary;
 
   const list = $("batch-result-list");
   list.innerHTML = "";
@@ -1023,7 +1175,8 @@ function finishQueue() {
     } else {
       const state = document.createElement("span");
       state.className = "state";
-      state.textContent = `失敗: ${item.error || ""}`;
+      state.textContent =
+        item.status === "cancelled" ? "中止しました" : `失敗: ${item.error || ""}`;
       li.appendChild(state);
     }
 
@@ -1033,17 +1186,6 @@ function finishQueue() {
   showView("batch");
 }
 
-$("batch-restart").addEventListener("click", () => {
-  queue = [];
-  queueIndex = -1;
-  queueSettings = null;
-  jobId = null;
-  clearQueue();
-  videoInput.value = "";
-  $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）";
-  $("submit").disabled = true;
-  updateAutoOpenAvailability(0);
-  showView("upload");
-});
+$("batch-restart").addEventListener("click", resetToUploadView);
 
 init();

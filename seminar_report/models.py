@@ -140,6 +140,8 @@ class JobStatus(str, Enum):
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    """利用者が中止したもの。失敗とは区別する(エラー表示にしないため)。"""
 
 
 class JobStep(str, Enum):

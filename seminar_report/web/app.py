@@ -235,6 +235,19 @@ async def job_detail(job_id: str) -> dict:
     return _report_payload(_require_job(job_id))
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str) -> dict:
+    """処理中のジョブに中止を要求する。
+
+    即座に止まるとは限らない。実行中のスレッドは強制終了できないため、
+    パイプラインが次の進捗報告に到達した時点で停止する。
+    """
+    job = _require_job(job_id)
+    if not manager.cancel(job):
+        raise HTTPException(409, "すでに終了しているジョブです")
+    return {"ok": True, "status": job.status.value}
+
+
 class ReportPatch(BaseModel):
     title: str | None = None
     overview: str | None = None
