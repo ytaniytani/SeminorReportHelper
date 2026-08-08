@@ -103,6 +103,9 @@ def run_pipeline(
         transcript, provider, spec, language, on_progress, options.user_request or ""
     )
     report.source_video = video.name
+    # 見出し1(本文タイトル)は元動画のファイル名にする(拡張子は除く)。
+    # AI が付けたタイトルは outline 内で概要文の生成に使うだけに留める。
+    report.title = video.stem
     report.duration = transcript.duration or duration
 
     # 6. キャプチャ

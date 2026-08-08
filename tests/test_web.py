@@ -63,7 +63,8 @@ def test_full_job_flow(client: TestClient, sample_video: Path) -> None:
 
     assert data["status"] == "done", data["error"]
     report = data["report"]
-    assert report["title"] == "社内AI活用セミナー"
+    # 本文の見出し1(タイトル)は元動画のファイル名(拡張子なし)にする
+    assert report["title"] == "sample"
     assert len(report["sections"]) == 2
     assert report["char_count"] > 0
 
@@ -234,7 +235,7 @@ def test_job_list_allows_recovery_after_disconnect(
     entry = next(j for j in jobs if j["job_id"] == job_id)
 
     assert entry["status"] == "done"
-    assert entry["title"] == "社内AI活用セミナー"
+    assert entry["title"] == "sample"
     assert entry["video"] == sample_video.name
 
 

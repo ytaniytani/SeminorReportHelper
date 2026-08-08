@@ -47,9 +47,6 @@ def render_markdown(report: Report, image_prefix: str = "images/") -> str:
         body = _substitute(section.body, captures, image_prefix).strip()
         lines += [f"# {section.title}", "", body, ""]
 
-    if report.source_video:
-        lines += ["---", "", f"*元動画: {report.source_video}*", ""]
-
     return "\n".join(lines).rstrip() + "\n"
 
 
