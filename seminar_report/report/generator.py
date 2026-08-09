@@ -175,7 +175,12 @@ def build_outline(
         language=language,
         user_request=user_request,
     )
-    data = provider.complete_json(prompt, system=prompts.SYSTEM, max_tokens=3000)
+    try:
+        data = provider.complete_json(prompt, system=prompts.SYSTEM, max_tokens=3000)
+    except LLMError:
+        # 章立ての設計に失敗しても、区間そのままを章にすれば続行できる。
+        # 1 回のフォーマット崩れでジョブ全体を落とさないためのフォールバック。
+        data = {}
 
     sections = data.get("sections") or []
     if not sections:

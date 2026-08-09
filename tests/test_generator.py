@@ -3,9 +3,14 @@ from __future__ import annotations
 from conftest import MockProvider, ScriptedProvider
 
 from seminar_report.llm.base import extract_json
-from seminar_report.models import DetailLevel, Transcript
+from seminar_report.models import ChunkSummary, DetailLevel, Transcript
 from seminar_report.report.detail import resolve_detail
-from seminar_report.report.generator import generate_report, plan_chunks, write_sections
+from seminar_report.report.generator import (
+    build_outline,
+    generate_report,
+    plan_chunks,
+    write_sections,
+)
 
 
 def test_extract_json_handles_code_fences() -> None:
@@ -105,6 +110,28 @@ def test_fallback_capture_when_llm_places_no_marker_at_all(transcript: Transcrip
     assert captures[0].caption == "セクションA"
     assert captures[0].resolved_time <= transcript.duration
     assert "[[capture:s0_0]]" in sections[0].body
+
+
+def test_build_outline_falls_back_when_model_never_returns_a_json_object(
+    transcript: Transcript,
+) -> None:
+    """章立ての JSON 化に(再試行しても)失敗しても、区間そのままを章にして続行する。
+
+    以前はここで AttributeError ('list' object has no attribute 'get') が
+    そのまま送出され、ジョブが原因不明のまま落ちていた。
+    """
+    provider = MockProvider(responses=["説明その1", "説明その2"])
+    summaries = [
+        ChunkSummary(start=0.0, end=40.0, summary="前半の要約", topics=[]),
+        ChunkSummary(start=40.0, end=70.0, summary="後半の要約", topics=[]),
+    ]
+    spec = resolve_detail(DetailLevel.STANDARD)
+
+    outline = build_outline(summaries, transcript, provider, spec, "日本語")
+
+    assert outline["title"] == "セミナーレポート"
+    assert outline["key_points"] == []
+    assert [s["focus"] for s in outline["sections"]] == ["前半の要約", "後半の要約"]
 
 
 def test_all_pipeline_stages_are_invoked(transcript: Transcript) -> None:
