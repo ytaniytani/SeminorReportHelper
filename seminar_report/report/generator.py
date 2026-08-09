@@ -175,8 +175,14 @@ def build_outline(
         language=language,
         user_request=user_request,
     )
+    # セクション数が多い(detailed・大きめの --chars)ほど JSON 自体が長くなる。
+    # 固定値のままだと応答が max_tokens で打ち切られ、閉じ括弧を欠いた
+    # 不完全な JSON になりうる(extract_json のフォールバック抽出が、たまたま
+    # 中の "sections" 配列だけを有効な JSON として拾ってしまうことがあり、
+    # その場合 dict ではなく list が返ってジョブが落ちる一因になっていた)。
+    outline_max_tokens = max(3000, spec.section_range[1] * 300)
     try:
-        data = provider.complete_json(prompt, system=prompts.SYSTEM, max_tokens=3000)
+        data = provider.complete_json(prompt, system=prompts.SYSTEM, max_tokens=outline_max_tokens)
     except LLMError:
         # 章立ての設計に失敗しても、区間そのままを章にすれば続行できる。
         # 1 回のフォーマット崩れでジョブ全体を落とさないためのフォールバック。
