@@ -20,6 +20,11 @@ let queueAborted = false;
 let cancelRequested = false;
 let currentXhr = null;
 
+// クロップピッカーの「動画からフレームを取得」は、選択中の動画ファイルに
+// 依存する。ファイル選択が変わるたびに有効/無効を切り替える必要があるが、
+// その実体は別スコープ(IIFE)にあるため、フック関数として差し込んでもらう。
+let syncCropVideoSource = () => {};
+
 // ジョブ ID を変数だけで持つと、リロードした瞬間に走行中のジョブへ戻れなくなる。
 const JOB_KEY = "seminar-report:job";
 
@@ -160,6 +165,7 @@ async function init() {
     rememberAutoOpen($("auto-open-html").checked)
   );
   updateAutoOpenAvailability(0);
+  syncCropVideoSource();
 
   await resumeState();
 }
@@ -310,6 +316,7 @@ videoInput.addEventListener("change", onFileChosen);
 
 function onFileChosen() {
   const files = Array.from(videoInput.files);
+  syncCropVideoSource();
   if (!files.length) return;
 
   if (files.length === 1) {
@@ -356,9 +363,19 @@ function updateAutoOpenAvailability(count) {
   const rectEl = $("crop-rect");
   const readout = $("crop-picker-readout");
   const clearBtn = $("crop-picker-clear");
+  const videoSource = $("crop-video-source");
+  const videoToggle = $("crop-video-toggle");
+  const videoMultiHint = $("crop-video-multi-hint");
+  const videoPickerPanel = $("crop-video-picker");
+  const videoPreview = $("crop-video-preview");
+  const videoSeek = $("crop-video-seek");
+  const videoTime = $("crop-video-time");
+  const videoCapture = $("crop-video-capture");
 
   let objectUrl = null;
   let dragOrigin = null; // { x, y, imageRect } (imageRect は表示中の img の境界)
+  let videoFrameObjectUrl = null;
+  let videoFrameSourceFile = null; // 現在プレビュー中の File(選択が変わったら閉じるための目印)
 
   toggle.addEventListener("click", () => {
     const opening = panel.hidden;
@@ -399,6 +416,8 @@ function updateAutoOpenAvailability(count) {
     objectUrl = URL.createObjectURL(file);
     previewImage.onload = () => {
       dropZone.hidden = true;
+      videoSource.hidden = true;
+      closeVideoPicker();
       canvasWrap.hidden = false;
       rectEl.style.display = "none";
       readout.textContent = "画像上をドラッグして範囲を選択してください";
@@ -414,9 +433,105 @@ function updateAutoOpenAvailability(count) {
     previewImage.removeAttribute("src");
     canvasWrap.hidden = true;
     dropZone.hidden = false;
+    videoSource.hidden = false;
     rectEl.style.display = "none";
     readout.textContent = "";
   });
+
+  // ---- 動画からフレームを取得 ----
+  // 選択済みの動画を <video> に読み込んでシークし、その瞬間のフレームを
+  // canvas 経由で切り出して既存の画像プレビュー(loadImage)に渡す。
+  // サーバーへのアップロードや変換は不要(ブラウザ内で完結する)。
+
+  videoToggle.addEventListener("click", () => {
+    const files = videoInput.files;
+    if (!files || !files.length) return;
+    if (!videoPickerPanel.hidden) {
+      closeVideoPicker();
+      return;
+    }
+    openVideoPicker(files[0]);
+  });
+
+  function openVideoPicker(file) {
+    videoFrameSourceFile = file;
+    if (videoFrameObjectUrl) URL.revokeObjectURL(videoFrameObjectUrl);
+    videoFrameObjectUrl = URL.createObjectURL(file);
+    videoSeek.disabled = true;
+    videoCapture.disabled = true;
+    videoTime.textContent = "読み込み中…";
+    videoPickerPanel.hidden = false;
+    videoToggle.textContent = "動画を閉じる";
+    videoPreview.src = videoFrameObjectUrl;
+  }
+
+  function closeVideoPicker() {
+    videoPickerPanel.hidden = true;
+    videoToggle.textContent = "動画からフレームを取得";
+    videoPreview.pause();
+    videoPreview.removeAttribute("src");
+    videoPreview.load();
+    if (videoFrameObjectUrl) {
+      URL.revokeObjectURL(videoFrameObjectUrl);
+      videoFrameObjectUrl = null;
+    }
+    videoFrameSourceFile = null;
+  }
+
+  videoPreview.addEventListener("loadedmetadata", () => {
+    videoSeek.min = "0";
+    videoSeek.max = String(videoPreview.duration || 0);
+    videoSeek.step = "0.1";
+    videoSeek.value = "0";
+    videoSeek.disabled = false;
+    videoCapture.disabled = false;
+    updateVideoTimeLabel();
+  });
+
+  videoSeek.addEventListener("input", () => {
+    videoPreview.currentTime = Number(videoSeek.value);
+  });
+  videoPreview.addEventListener("timeupdate", updateVideoTimeLabel);
+  videoPreview.addEventListener("seeked", updateVideoTimeLabel);
+
+  function updateVideoTimeLabel() {
+    const fmt = (seconds) => {
+      const total = Math.max(0, Math.round(seconds || 0));
+      return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    };
+    videoTime.textContent = `${fmt(videoPreview.currentTime)} / ${fmt(videoPreview.duration)}`;
+  }
+
+  videoCapture.addEventListener("click", () => {
+    const width = videoPreview.videoWidth;
+    const height = videoPreview.videoHeight;
+    if (!width || !height) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(videoPreview, 0, 0, width, height);
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return;
+        loadImage(blob);
+      },
+      "image/jpeg",
+      0.92
+    );
+  });
+
+  // 外側(onFileChosen 等)からファイル選択の変化を伝えてもらうためのフック。
+  syncCropVideoSource = () => {
+    const files = videoInput.files;
+    const hasVideo = !!(files && files.length);
+    videoToggle.disabled = !hasVideo;
+    videoMultiHint.hidden = !hasVideo || files.length <= 1;
+    // 選択中の動画が変わっていたら、開いていたプレビューは閉じて選び直させる
+    if (!hasVideo || videoFrameSourceFile !== files[0]) {
+      closeVideoPicker();
+    }
+  };
+  syncCropVideoSource();
 
   previewImage.addEventListener("mousedown", (event) => {
     event.preventDefault();
@@ -1138,6 +1253,7 @@ function resetToUploadView() {
   $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）";
   $("submit").disabled = true;
   updateAutoOpenAvailability(0);
+  syncCropVideoSource();
   setStatus("");
   showView("upload");
 }

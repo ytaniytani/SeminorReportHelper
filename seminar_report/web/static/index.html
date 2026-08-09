@@ -86,6 +86,23 @@
                 <br /><span class="hint">動画のスクリーンショットなど、切り出したい画面と同じ構図の画像を使ってください</span>
               </p>
             </div>
+            <div class="crop-video-source" id="crop-video-source">
+              <p class="hint">または</p>
+              <button type="button" id="crop-video-toggle" class="ghost" disabled>
+                動画からフレームを取得
+              </button>
+              <p class="hint" id="crop-video-multi-hint" hidden>複数選択時は先頭の動画を使用します</p>
+              <div id="crop-video-picker" class="crop-video-picker" hidden>
+                <video id="crop-video-preview" muted playsinline></video>
+                <input type="range" id="crop-video-seek" min="0" max="0" step="0.1" value="0" disabled />
+                <div class="crop-video-actions">
+                  <span class="hint" id="crop-video-time">00:00 / 00:00</span>
+                  <button type="button" id="crop-video-capture" class="ghost" disabled>
+                    この位置のフレームを使う
+                  </button>
+                </div>
+              </div>
+            </div>
             <div class="crop-canvas-wrap" id="crop-canvas-wrap" hidden>
               <img id="crop-preview-image" alt="範囲指定用のプレビュー画像" draggable="false" />
               <div id="crop-rect" class="crop-rect"></div>

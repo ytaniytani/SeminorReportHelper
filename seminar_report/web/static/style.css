@@ -98,6 +98,35 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .crop-drop:hover, .crop-drop.over { border-color: var(--accent); background: #eff5ff; }
 .crop-drop p { margin: 0; font-size: 13px; }
 
+.crop-video-source { margin-top: 14px; text-align: center; }
+.crop-video-source > .hint { margin: 0 0 8px; }
+.crop-video-picker {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  text-align: left;
+}
+#crop-video-preview {
+  display: block;
+  width: 100%;
+  max-width: min(800px, 100%);
+  max-height: 360px;
+  margin: 0 auto;
+  border-radius: 6px;
+  background: #000;
+}
+#crop-video-seek { width: 100%; margin-top: 10px; }
+.crop-video-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.crop-video-actions button { margin-top: 0; }
+
 .crop-canvas-wrap {
   position: relative;
   display: inline-block;
