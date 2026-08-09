@@ -349,22 +349,19 @@ function updateAutoOpenAvailability(count) {
 }
 
 // ---- 切り出し範囲ピッカー ----
-// 画像を貼り付け/ドロップし、その上でドラッグした矩形を "crop" 欄へ
-// リアルタイムに反映する。値は画像の表示サイズに対する割合(0〜1)なので、
-// 動画のフレームと縦横比さえ合っていれば実ピクセルサイズは問わない。
+// 選択中の動画をブラウザ内でその場で読み込み、シークバーで選んだ瞬間の
+// フレームを canvas 経由で切り出して "crop" 欄へドラッグ選択できるように
+// する。サーバーへのアップロードや変換は発生しない。
 (() => {
   const cropInput = $("crop");
   const toggle = $("crop-picker-toggle");
   const panel = $("crop-picker-panel");
-  const dropZone = $("crop-drop");
-  const fileInput = $("crop-image-input");
+  const emptyHint = $("crop-video-empty-hint");
   const canvasWrap = $("crop-canvas-wrap");
   const previewImage = $("crop-preview-image");
   const rectEl = $("crop-rect");
   const readout = $("crop-picker-readout");
   const clearBtn = $("crop-picker-clear");
-  const videoSource = $("crop-video-source");
-  const videoToggle = $("crop-video-toggle");
   const videoMultiHint = $("crop-video-multi-hint");
   const videoPickerPanel = $("crop-video-picker");
   const videoPreview = $("crop-video-preview");
@@ -376,51 +373,24 @@ function updateAutoOpenAvailability(count) {
   let dragOrigin = null; // { x, y, imageRect } (imageRect は表示中の img の境界)
   let videoFrameObjectUrl = null;
   let videoFrameSourceFile = null; // 現在プレビュー中の File(選択が変わったら閉じるための目印)
+  let captured = false; // フレームを取得済みか(true の間は crop-canvas-wrap を表示)
 
   toggle.addEventListener("click", () => {
     const opening = panel.hidden;
     panel.hidden = !opening;
-    toggle.textContent = opening ? "画像ピッカーを閉じる" : "画像で範囲を指定";
-  });
-
-  dropZone.addEventListener("click", () => fileInput.click());
-  fileInput.addEventListener("change", () => {
-    if (fileInput.files[0]) loadImage(fileInput.files[0]);
-  });
-
-  dropZone.addEventListener("dragover", (event) => {
-    event.preventDefault();
-    dropZone.classList.add("over");
-  });
-  dropZone.addEventListener("dragleave", () => dropZone.classList.remove("over"));
-  dropZone.addEventListener("drop", (event) => {
-    event.preventDefault();
-    dropZone.classList.remove("over");
-    const file = event.dataTransfer.files[0];
-    if (file) loadImage(file);
-  });
-
-  // クリップボード貼り付け(Ctrl+V)。ピッカーを開いている間だけ拾う。
-  document.addEventListener("paste", (event) => {
-    if (panel.hidden) return;
-    const item = [...(event.clipboardData?.items || [])].find(
-      (i) => i.type && i.type.startsWith("image/")
-    );
-    if (!item) return;
-    const file = item.getAsFile();
-    if (file) loadImage(file);
+    toggle.textContent = opening ? "閉じる" : "動画で範囲を指定";
+    if (opening) refreshPanelState();
   });
 
   function loadImage(file) {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(file);
     previewImage.onload = () => {
-      dropZone.hidden = true;
-      videoSource.hidden = true;
+      captured = true;
       closeVideoPicker();
-      canvasWrap.hidden = false;
       rectEl.style.display = "none";
       readout.textContent = "画像上をドラッグして範囲を選択してください";
+      refreshPanelState();
     };
     previewImage.src = objectUrl;
   }
@@ -431,28 +401,13 @@ function updateAutoOpenAvailability(count) {
       objectUrl = null;
     }
     previewImage.removeAttribute("src");
-    canvasWrap.hidden = true;
-    dropZone.hidden = false;
-    videoSource.hidden = false;
     rectEl.style.display = "none";
     readout.textContent = "";
+    captured = false;
+    refreshPanelState();
   });
 
   // ---- 動画からフレームを取得 ----
-  // 選択済みの動画を <video> に読み込んでシークし、その瞬間のフレームを
-  // canvas 経由で切り出して既存の画像プレビュー(loadImage)に渡す。
-  // サーバーへのアップロードや変換は不要(ブラウザ内で完結する)。
-
-  videoToggle.addEventListener("click", () => {
-    const files = videoInput.files;
-    if (!files || !files.length) return;
-    if (!videoPickerPanel.hidden) {
-      closeVideoPicker();
-      return;
-    }
-    openVideoPicker(files[0]);
-  });
-
   function openVideoPicker(file) {
     videoFrameSourceFile = file;
     if (videoFrameObjectUrl) URL.revokeObjectURL(videoFrameObjectUrl);
@@ -460,14 +415,10 @@ function updateAutoOpenAvailability(count) {
     videoSeek.disabled = true;
     videoCapture.disabled = true;
     videoTime.textContent = "読み込み中…";
-    videoPickerPanel.hidden = false;
-    videoToggle.textContent = "動画を閉じる";
     videoPreview.src = videoFrameObjectUrl;
   }
 
   function closeVideoPicker() {
-    videoPickerPanel.hidden = true;
-    videoToggle.textContent = "動画からフレームを取得";
     videoPreview.pause();
     videoPreview.removeAttribute("src");
     videoPreview.load();
@@ -520,16 +471,47 @@ function updateAutoOpenAvailability(count) {
     );
   });
 
-  // 外側(onFileChosen 等)からファイル選択の変化を伝えてもらうためのフック。
-  syncCropVideoSource = () => {
+  /** パネル内で「動画未選択」「フレーム選択中」「取得済み」のどれを見せるか切り替える。 */
+  function refreshPanelState() {
     const files = videoInput.files;
     const hasVideo = !!(files && files.length);
-    videoToggle.disabled = !hasVideo;
-    videoMultiHint.hidden = !hasVideo || files.length <= 1;
-    // 選択中の動画が変わっていたら、開いていたプレビューは閉じて選び直させる
-    if (!hasVideo || videoFrameSourceFile !== files[0]) {
-      closeVideoPicker();
+
+    if (captured) {
+      emptyHint.hidden = true;
+      videoPickerPanel.hidden = true;
+      videoMultiHint.hidden = true;
+      canvasWrap.hidden = false;
+      clearBtn.hidden = false;
+      return;
     }
+
+    canvasWrap.hidden = true;
+    clearBtn.hidden = true;
+
+    if (!hasVideo) {
+      emptyHint.hidden = false;
+      videoPickerPanel.hidden = true;
+      videoMultiHint.hidden = true;
+      closeVideoPicker();
+      return;
+    }
+
+    emptyHint.hidden = true;
+    videoPickerPanel.hidden = false;
+    videoMultiHint.hidden = files.length <= 1;
+    if (videoFrameSourceFile !== files[0]) {
+      openVideoPicker(files[0]);
+    }
+  }
+
+  // 外側(onFileChosen 等)からファイル選択の変化を伝えてもらうためのフック。
+  // パネルが閉じている間は、開いたときに refreshPanelState() が再評価する。
+  syncCropVideoSource = () => {
+    if (panel.hidden) {
+      if (!captured) closeVideoPicker();
+      return;
+    }
+    refreshPanelState();
   };
   syncCropVideoSource();
 

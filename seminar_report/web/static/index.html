@@ -77,31 +77,20 @@
         </div>
 
         <div class="crop-picker">
-          <button type="button" id="crop-picker-toggle" class="ghost">画像で範囲を指定</button>
+          <button type="button" id="crop-picker-toggle" class="ghost">動画で範囲を指定</button>
           <div id="crop-picker-panel" class="crop-picker-panel" hidden>
-            <div class="crop-drop" id="crop-drop" tabindex="0">
-              <input type="file" id="crop-image-input" accept="image/*" hidden />
-              <p id="crop-drop-label">
-                ここに画像をドラッグ&amp;ドロップ、貼り付け（Ctrl+V）、またはクリックして選択
-                <br /><span class="hint">動画のスクリーンショットなど、切り出したい画面と同じ構図の画像を使ってください</span>
-              </p>
-            </div>
-            <div class="crop-video-source" id="crop-video-source">
-              <p class="hint">または</p>
-              <button type="button" id="crop-video-toggle" class="ghost" disabled>
-                動画からフレームを取得
-              </button>
-              <p class="hint" id="crop-video-multi-hint" hidden>複数選択時は先頭の動画を使用します</p>
-              <div id="crop-video-picker" class="crop-video-picker" hidden>
-                <video id="crop-video-preview" muted playsinline></video>
-                <input type="range" id="crop-video-seek" min="0" max="0" step="0.1" value="0" disabled />
-                <div class="crop-video-actions">
-                  <span class="hint" id="crop-video-time">00:00 / 00:00</span>
-                  <button type="button" id="crop-video-capture" class="ghost" disabled>
-                    この位置のフレームを使う
-                  </button>
-                </div>
+            <p class="hint" id="crop-video-empty-hint">先に動画を選択してください</p>
+            <div id="crop-video-picker" class="crop-video-picker" hidden>
+              <p class="hint">シークバーで切り出したい画面が映っている瞬間まで移動してください</p>
+              <video id="crop-video-preview" muted playsinline></video>
+              <input type="range" id="crop-video-seek" min="0" max="0" step="0.1" value="0" disabled />
+              <div class="crop-video-actions">
+                <span class="hint" id="crop-video-time">00:00 / 00:00</span>
+                <button type="button" id="crop-video-capture" class="ghost" disabled>
+                  この位置のフレームを使う
+                </button>
               </div>
+              <p class="hint" id="crop-video-multi-hint" hidden>複数選択時は先頭の動画を使用します</p>
             </div>
             <div class="crop-canvas-wrap" id="crop-canvas-wrap" hidden>
               <img id="crop-preview-image" alt="範囲指定用のプレビュー画像" draggable="false" />
@@ -109,7 +98,7 @@
             </div>
             <p class="hint" id="crop-picker-readout"></p>
             <div class="crop-picker-actions">
-              <button type="button" id="crop-picker-clear" class="ghost">画像をクリア</button>
+              <button type="button" id="crop-picker-clear" class="ghost" hidden>選び直す</button>
             </div>
           </div>
         </div>
