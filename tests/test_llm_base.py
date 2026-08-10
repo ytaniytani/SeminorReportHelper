@@ -43,3 +43,30 @@ def test_complete_json_raises_when_retry_also_fails() -> None:
 
     with pytest.raises(LLMError):
         provider.complete_json("章立てを設計してください")
+
+
+def test_complete_json_retries_when_model_returns_a_json_array() -> None:
+    """辞書ではなく配列で返すモデルもいる。呼び出し側は .get() を前提にしているため、
+
+    そのまま返すと 'list' object has no attribute 'get' で落ちる。JSON が
+    パースできても辞書でなければ、思考過程を書いたときと同じく再試行すること。
+    """
+    provider = MockProvider(
+        responses=[
+            '[{"title": "見出し"}]',
+            '{"title": "T", "key_points": [], "sections": []}',
+        ]
+    )
+
+    result = provider.complete_json("章立てを設計してください")
+
+    assert result == {"title": "T", "key_points": [], "sections": []}
+    assert len(provider.prompts) == 2
+    assert "JSON オブジェクトのみ" in provider.prompts[1]
+
+
+def test_complete_json_raises_when_retry_still_returns_non_dict() -> None:
+    provider = MockProvider(responses=["[1, 2, 3]", '["a", "b"]'])
+
+    with pytest.raises(LLMError):
+        provider.complete_json("章立てを設計してください")

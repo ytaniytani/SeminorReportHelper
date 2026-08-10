@@ -56,9 +56,6 @@ def render_storage(report: Report, include_toc: bool = True) -> str:
         parts.append(f"<h1>{inline(section.title)}</h1>")
         parts.append(_blocks_to_xhtml(section.body, captures))
 
-    if report.source_video:
-        parts.append(f"<hr /><p><em>元動画: {escape(report.source_video)}</em></p>")
-
     return "".join(parts)
 
 

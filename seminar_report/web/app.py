@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from seminar_report.capture import swap_capture
 from seminar_report.config import get_settings
-from seminar_report.llm import MODEL_CHOICES, PROVIDERS
+from seminar_report.llm import MODEL_CHOICES, PROVIDERS, resolve_provider_and_model
 from seminar_report.models import DetailLevel, JobStatus, Report
 from seminar_report.pipeline import PipelineOptions, export_zip, write_outputs
 from seminar_report.report.detail import PRESETS
@@ -120,7 +120,7 @@ async def create_job(
     )
 
     job = manager.create(video_path, job_root / "output", options)
-    return {"job_id": job.id}
+    return {"job_id": job.id, "options": _options_summary(options)}
 
 
 def _require_job(job_id: str) -> Job:
@@ -128,6 +128,26 @@ def _require_job(job_id: str) -> Job:
     if job is None:
         raise HTTPException(404, "ジョブが見つかりません")
     return job
+
+
+def _options_summary(options: PipelineOptions) -> dict:
+    """進捗画面に「今どの条件で実行しているか」を出すための要約。
+
+    provider/model は未指定なら設定値にフォールバックする(PipelineOptions
+    はそのまま None を保持しているため、実際に使われる値をここで解決する)。
+    """
+    settings = get_settings()
+    provider, model = resolve_provider_and_model(options.provider, options.model)
+    return {
+        "detail": options.detail.value,
+        "provider": provider,
+        "model": model,
+        "whisper_model": options.whisper_model or settings.whisper_model,
+        "verify_captures": options.verify_captures,
+        "include_images": options.include_images,
+        "has_crop": options.capture_crop is not None,
+        "has_request": bool(options.user_request),
+    }
 
 
 @app.get("/api/jobs/{job_id}/events")
@@ -178,6 +198,7 @@ def _report_payload(job: Job) -> dict:
         "error": job.error,
         "traceback": job.traceback,
         "report": _serialize_report(report, job.id) if report else None,
+        "options": _options_summary(job.options),
     }
 
 
@@ -233,6 +254,19 @@ async def list_jobs() -> dict:
 @app.get("/api/jobs/{job_id}")
 async def job_detail(job_id: str) -> dict:
     return _report_payload(_require_job(job_id))
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str) -> dict:
+    """処理中のジョブに中止を要求する。
+
+    即座に止まるとは限らない。実行中のスレッドは強制終了できないため、
+    パイプラインが次の進捗報告に到達した時点で停止する。
+    """
+    job = _require_job(job_id)
+    if not manager.cancel(job):
+        raise HTTPException(409, "すでに終了しているジョブです")
+    return {"ok": True, "status": job.status.value}
 
 
 class ReportPatch(BaseModel):

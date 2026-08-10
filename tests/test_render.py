@@ -172,3 +172,11 @@ def test_html_excludes_excluded_capture(report: Report) -> None:
     html = render_html(report)
     assert "data:image" not in html
     assert "<img" not in html
+
+
+def test_source_video_is_not_printed_in_output(report: Report) -> None:
+    """元動画のファイル名は本文の末尾には出さない(タイトルとして使うのみ)。"""
+    report.source_video = "seminar.mp4"
+    assert "元動画" not in render_markdown(report)
+    assert "元動画" not in render_html(report)
+    assert "元動画" not in render_storage(report)

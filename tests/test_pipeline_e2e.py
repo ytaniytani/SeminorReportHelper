@@ -69,7 +69,8 @@ def test_pipeline_produces_report_with_images(
     )
 
     report = result.report
-    assert report.title == "社内AI活用セミナー"
+    # 本文の見出し1(タイトル)は元動画のファイル名(拡張子なし)にする
+    assert report.title == "sample"
     assert report.source_video == "sample.mp4"
     assert len(report.sections) == 2
 
@@ -87,8 +88,9 @@ def test_pipeline_produces_report_with_images(
     assert result.report_json_path.exists()
 
     markdown = result.markdown_path.read_text(encoding="utf-8")
-    assert "# 社内AI活用セミナー" in markdown
+    assert "# sample" in markdown
     assert "![" in markdown
+    assert "元動画" not in markdown
 
     storage = result.storage_path.read_text(encoding="utf-8")
     ET.fromstring(wrap_for_validation(storage))

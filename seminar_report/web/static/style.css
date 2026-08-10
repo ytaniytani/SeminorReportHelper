@@ -86,17 +86,32 @@ select:focus, input:focus, textarea:focus { outline: 2px solid var(--accent); ou
   border-radius: 10px;
   background: var(--panel);
 }
-.crop-drop {
-  border: 2px dashed var(--border);
+.crop-video-empty-hint { text-align: center; margin: 8px 0; }
+.crop-video-picker {
+  padding: 12px;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 32px 16px;
-  text-align: center;
-  color: var(--muted);
-  cursor: pointer;
-  transition: border-color .15s, background .15s;
+  background: var(--panel);
 }
-.crop-drop:hover, .crop-drop.over { border-color: var(--accent); background: #eff5ff; }
-.crop-drop p { margin: 0; font-size: 13px; }
+.crop-video-picker > .hint:first-child { margin-top: 0; }
+#crop-video-preview {
+  display: block;
+  width: 100%;
+  max-width: min(800px, 100%);
+  max-height: 360px;
+  margin: 0 auto;
+  border-radius: 6px;
+  background: #000;
+}
+#crop-video-seek { width: 100%; margin-top: 10px; }
+.crop-video-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.crop-video-actions button { margin-top: 0; }
 
 .crop-canvas-wrap {
   position: relative;
@@ -156,6 +171,7 @@ button.ghost { color: var(--muted); }
   margin: 16px 0 10px;
 }
 .bar-fill { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.run-options { margin: 4px 0 0; }
 .detail { color: var(--muted); font-size: 14px; margin: 0; }
 .note { color: var(--muted); font-size: 13px; margin-top: 20px; }
 .log { list-style: none; padding: 0; margin-top: 20px; color: var(--muted); font-size: 13px; }

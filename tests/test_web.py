@@ -6,6 +6,7 @@ HTTP 経由で通す。
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def _wait_for_job(client: TestClient, job_id: str, timeout: float = 60.0) -> dic
     deadline = time.time() + timeout
     while time.time() < deadline:
         data = client.get(f"/api/jobs/{job_id}").json()
-        if data["status"] in ("done", "failed"):
+        if data["status"] in ("done", "failed", "cancelled"):
             return data
         time.sleep(0.2)
     raise AssertionError("ジョブが時間内に終わりませんでした")
@@ -62,7 +63,8 @@ def test_full_job_flow(client: TestClient, sample_video: Path) -> None:
 
     assert data["status"] == "done", data["error"]
     report = data["report"]
-    assert report["title"] == "社内AI活用セミナー"
+    # 本文の見出し1(タイトル)は元動画のファイル名(拡張子なし)にする
+    assert report["title"] == "sample"
     assert len(report["sections"]) == 2
     assert report["char_count"] > 0
 
@@ -83,6 +85,40 @@ def test_full_job_flow(client: TestClient, sample_video: Path) -> None:
     assert html.status_code == 200
     assert html.headers["content-type"].startswith("text/html")
     assert "data:image/jpeg;base64," in html.text
+
+
+def test_job_response_reports_the_resolved_options(client: TestClient, sample_video: Path) -> None:
+    """進捗画面に「今どの条件(特にどのモデル)で動いているか」を出すための情報。
+
+    provider/model を空欄で送った場合、実際に使われる設定値まで解決されて
+    返ってくること(呼び出し側が別途 config を見て推測しなくて良いように)。
+    """
+    with sample_video.open("rb") as fh:
+        response = client.post(
+            "/api/jobs",
+            files={"video": (sample_video.name, fh, "video/mp4")},
+            data={
+                "detail": "detailed",
+                "provider": "",
+                "model": "",
+                "verify_captures": "true",
+                "crop": "0.1,0.1,0.9,0.9",
+            },
+        )
+    assert response.status_code == 200, response.text
+    job_id = response.json()["job_id"]
+
+    options = response.json()["options"]
+    assert options["detail"] == "detailed"
+    assert options["provider"] == "claude"  # 既定プロバイダ
+    assert options["model"]  # 空欄ではなく解決済みのモデル名が入っている
+    assert options["verify_captures"] is True
+    assert options["has_crop"] is True
+    assert options["has_request"] is False
+
+    # 完了後の GET でも同じ内容が取れる(SSE/ポーリングが切れて再接続した場合の一貫性)
+    data = _wait_for_job(client, job_id)
+    assert data["options"] == options
 
 
 
@@ -148,10 +184,78 @@ def test_swap_rejects_out_of_range_index(client: TestClient, sample_video: Path)
     assert response.status_code == 400
 
 
+def test_cancel_stops_a_running_job(
+    client: TestClient, monkeypatch, sample_video: Path, transcript: Transcript
+) -> None:
+    """処理中のジョブを中止でき、失敗ではなく中止として記録されること。"""
+    started = threading.Event()
+
+    def slow_transcribe(video, on_progress=None, **kwargs):
+        started.set()
+        # 実際の文字起こしと同じく、セグメントごとに進捗を報告しながら進む。
+        # この報告が中止の関門になっている。
+        for index in range(200):
+            if on_progress:
+                on_progress(index / 200, f"{index} セグメント")
+            time.sleep(0.05)
+        return transcript
+
+    monkeypatch.setattr(pipeline_module, "transcribe", slow_transcribe)
+
+    job_id = _submit(client, sample_video)
+    assert started.wait(20), "ジョブが走り始めませんでした"
+
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+    assert response.status_code == 200
+
+    data = _wait_for_job(client, job_id, timeout=20)
+    assert data["status"] == "cancelled"
+    # 中止はエラーではないので、失敗としての情報は残さない
+    assert data["error"] is None
+    assert data["traceback"] is None
+    assert data["report"] is None
+
+
+def test_cancel_rejects_finished_job(client: TestClient, sample_video: Path) -> None:
+    job_id = _submit(client, sample_video)
+    _wait_for_job(client, job_id)
+
+    response = client.post(f"/api/jobs/{job_id}/cancel")
+    assert response.status_code == 409
+
+
+def test_events_stream_reports_cancellation(
+    client: TestClient, monkeypatch, sample_video: Path, transcript: Transcript
+) -> None:
+    """中止したジョブでも SSE が終了通知を返し、UI が待ち続けないこと。"""
+    started = threading.Event()
+
+    def slow_transcribe(video, on_progress=None, **kwargs):
+        started.set()
+        for index in range(200):
+            if on_progress:
+                on_progress(index / 200, f"{index} セグメント")
+            time.sleep(0.05)
+        return transcript
+
+    monkeypatch.setattr(pipeline_module, "transcribe", slow_transcribe)
+
+    job_id = _submit(client, sample_video)
+    assert started.wait(20)
+    client.post(f"/api/jobs/{job_id}/cancel")
+
+    with client.stream("GET", f"/api/jobs/{job_id}/events") as response:
+        body = "".join(response.iter_text())
+
+    assert "event: end" in body
+    assert '"status": "cancelled"' in body or '"status":"cancelled"' in body
+
+
 def test_missing_job_returns_404(client: TestClient) -> None:
     assert client.get("/api/jobs/unknown").status_code == 404
     assert client.get("/api/jobs/unknown/export").status_code == 404
     assert client.get("/api/jobs/unknown/html").status_code == 404
+    assert client.post("/api/jobs/unknown/cancel").status_code == 404
 
 
 def test_job_list_allows_recovery_after_disconnect(
@@ -165,7 +269,7 @@ def test_job_list_allows_recovery_after_disconnect(
     entry = next(j for j in jobs if j["job_id"] == job_id)
 
     assert entry["status"] == "done"
-    assert entry["title"] == "社内AI活用セミナー"
+    assert entry["title"] == "sample"
     assert entry["video"] == sample_video.name
 
 
