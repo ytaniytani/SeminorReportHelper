@@ -211,15 +211,16 @@ async function resumeQueue(saved) {
   // サーバー再起動でジョブがメモリから消えていると、listen() の SSE がすぐ
   // 失敗してポーリングに落ち、404 を延々と繰り返すことになる。先に存在を
   // 確認し、無ければバッチごと諦めて投入画面に戻す。
-  let exists = true;
+  let data = null;
+  let networkFailed = false;
   try {
     const response = await fetch(`/api/jobs/${jobId}`);
-    exists = response.ok;
+    if (response.ok) data = await response.json();
   } catch {
     // 応答が取れない場合は判断できないので、いつも通り再接続を試みる
-    exists = true;
+    networkFailed = true;
   }
-  if (!exists) {
+  if (data === null && !networkFailed) {
     clearQueue();
     queue = [];
     queueIndex = -1;
@@ -232,6 +233,7 @@ async function resumeQueue(saved) {
   renderBatchList();
   $("batch-heading").textContent = `動画 ${queueIndex + 1}/${queue.length}: ${queue[queueIndex].name}`;
   $("progress-label").textContent = "処理中のジョブに再接続しています…";
+  renderRunOptions(data ? data.options : null);
   listen();
 }
 
@@ -266,16 +268,19 @@ async function resumePreviousJob() {
   } else if (data.status === "failed") {
     showView("progress");
     hideBatchPanel();
+    renderRunOptions(data.options);
     showFailure(data.error, data.traceback);
   } else if (data.status === "cancelled") {
     showView("progress");
     hideBatchPanel();
+    renderRunOptions(data.options);
     showCancelled();
   } else {
     showView("progress");
     beginProgressView();
     hideBatchPanel();
     $("progress-label").textContent = "処理中のジョブに再接続しています…";
+    renderRunOptions(data.options);
     listen();
   }
 }
@@ -650,9 +655,9 @@ async function submitSingle(file, settings) {
   $("progress-label").textContent = "アップロードしています…";
   $("bar-fill").style.width = "0%";
 
-  let jobIdFromUpload;
+  let uploadResult;
   try {
-    jobIdFromUpload = await uploadJob(buildJobForm(file, settings));
+    uploadResult = await uploadJob(buildJobForm(file, settings));
   } catch (error) {
     // アップロード中に中止ボタンを押した場合は、失敗ではなく中止として扱う
     if (cancelRequested) {
@@ -663,7 +668,8 @@ async function submitSingle(file, settings) {
     return;
   }
 
-  rememberJob(jobIdFromUpload);
+  rememberJob(uploadResult.job_id);
+  renderRunOptions(uploadResult.options);
   lastStep = null;
   listen();
 }
@@ -709,9 +715,9 @@ async function advanceQueue(settings) {
     return;
   }
 
-  let jobIdFromUpload;
+  let uploadResult;
   try {
-    jobIdFromUpload = await uploadJob(buildJobForm(item.file, queueSettings));
+    uploadResult = await uploadJob(buildJobForm(item.file, queueSettings));
   } catch (error) {
     // アップロード中の中止は失敗として数えない
     if (queueAborted) {
@@ -726,8 +732,9 @@ async function advanceQueue(settings) {
     return;
   }
 
-  item.jobId = jobIdFromUpload;
-  jobId = jobIdFromUpload;
+  item.jobId = uploadResult.job_id;
+  jobId = uploadResult.job_id;
+  renderRunOptions(uploadResult.options);
   saveQueue();
   listen();
 }
@@ -763,7 +770,7 @@ function uploadJob(form) {
         return;
       }
       try {
-        resolve(JSON.parse(xhr.responseText).job_id);
+        resolve(JSON.parse(xhr.responseText));
       } catch {
         reject(new Error("サーバーの応答を解釈できませんでした"));
       }
@@ -784,6 +791,30 @@ function uploadJob(form) {
 
 function formatMB(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+}
+
+// 「今どの条件(特にどのLLMモデル)で実行しているか」を進捗画面に出す。
+// provider/model はフォームで未指定だと空欄のまま送っているため、実際に
+// 使われる値はサーバー側(_options_summary)で解決してもらったものをそのまま表示する。
+const DETAIL_LABELS = { brief: "簡潔", standard: "標準", detailed: "詳細", custom: "カスタム" };
+
+function renderRunOptions(options) {
+  const el = $("run-options");
+  if (!options) {
+    el.textContent = "";
+    return;
+  }
+  const parts = [
+    `詳細度: ${DETAIL_LABELS[options.detail] || options.detail}`,
+    `LLM: ${options.provider} / ${options.model}`,
+    `Whisper: ${options.whisper_model}`,
+    options.include_images
+      ? `画像あり（AI検証${options.verify_captures ? "あり" : "なし"}）`
+      : "画像なし",
+    `切り出し範囲: ${options.has_crop ? "設定あり" : "未設定"}`,
+  ];
+  if (options.has_request) parts.push("要望あり");
+  el.textContent = parts.join(" ・ ");
 }
 
 // ---- 進捗 ----
@@ -1231,6 +1262,7 @@ function resetToUploadView() {
   cancelRequested = false;
   currentXhr = null;
   $("log").innerHTML = "";
+  $("run-options").textContent = "";
   videoInput.value = "";
   $("drop-label").textContent = "ここに .mp4 をドロップ、またはクリックして選択（複数選択で連続処理）";
   $("submit").disabled = true;

@@ -40,4 +40,32 @@ def get_provider(name: str | None = None, **kwargs) -> LLMProvider:
     raise LLMError(f"未知の LLM プロバイダです: {name} (利用可能: {', '.join(PROVIDERS)})")
 
 
-__all__ = ["LLMError", "LLMProvider", "MODEL_CHOICES", "PROVIDERS", "extract_json", "get_provider"]
+_MODEL_SETTINGS_ATTR = {
+    "claude": "claude_model",
+    "openai": "openai_model",
+    "ollama": "ollama_model",
+}
+
+
+def resolve_provider_and_model(provider: str | None, model: str | None) -> tuple[str, str]:
+    """実際に使われるプロバイダ名・モデル名を、プロバイダを生成せずに解決する。
+
+    get_provider() はクライアント初期化(API キー確認など)を伴うため、
+    UI に「今どのモデルで動いているか」を表示するだけの目的には使えない。
+    """
+    settings = get_settings()
+    resolved_provider = (provider or settings.llm_provider).lower()
+    attr = _MODEL_SETTINGS_ATTR.get(resolved_provider, "claude_model")
+    resolved_model = model or getattr(settings, attr)
+    return resolved_provider, resolved_model
+
+
+__all__ = [
+    "LLMError",
+    "LLMProvider",
+    "MODEL_CHOICES",
+    "PROVIDERS",
+    "extract_json",
+    "get_provider",
+    "resolve_provider_and_model",
+]

@@ -87,6 +87,40 @@ def test_full_job_flow(client: TestClient, sample_video: Path) -> None:
     assert "data:image/jpeg;base64," in html.text
 
 
+def test_job_response_reports_the_resolved_options(client: TestClient, sample_video: Path) -> None:
+    """進捗画面に「今どの条件(特にどのモデル)で動いているか」を出すための情報。
+
+    provider/model を空欄で送った場合、実際に使われる設定値まで解決されて
+    返ってくること(呼び出し側が別途 config を見て推測しなくて良いように)。
+    """
+    with sample_video.open("rb") as fh:
+        response = client.post(
+            "/api/jobs",
+            files={"video": (sample_video.name, fh, "video/mp4")},
+            data={
+                "detail": "detailed",
+                "provider": "",
+                "model": "",
+                "verify_captures": "true",
+                "crop": "0.1,0.1,0.9,0.9",
+            },
+        )
+    assert response.status_code == 200, response.text
+    job_id = response.json()["job_id"]
+
+    options = response.json()["options"]
+    assert options["detail"] == "detailed"
+    assert options["provider"] == "claude"  # 既定プロバイダ
+    assert options["model"]  # 空欄ではなく解決済みのモデル名が入っている
+    assert options["verify_captures"] is True
+    assert options["has_crop"] is True
+    assert options["has_request"] is False
+
+    # 完了後の GET でも同じ内容が取れる(SSE/ポーリングが切れて再接続した場合の一貫性)
+    data = _wait_for_job(client, job_id)
+    assert data["options"] == options
+
+
 
 
 def test_patch_applies_edits(client: TestClient, sample_video: Path) -> None:
